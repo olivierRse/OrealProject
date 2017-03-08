@@ -1,10 +1,21 @@
+---
 title: "J1-Import donnée"
 output: html_document
+---
 
+```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-R Markdown
+```
 
+## R Markdown
+
+```{r}
 setwd("/Users/oliverousseau/Documents/BigData for Business/Cours/Oreal Data Camp")
+
+library(ggplot2)
+```
+
+```{r}
 data <- read.table("~/Documents/BigData for Business/Cours/Oreal Data Camp/datas/POC_RK_2014_2017.CSV", sep=";", quote="\"", encoding = 'latin1', header = T)
 
 data$Signature <- as.factor(data$Signature)
@@ -20,7 +31,7 @@ data[data$Fonction %in% c("LAQUES", "Lacquer", "Wax", "Wax / Clay", "GELS COIFFA
 data[data$Fonction %in% c("Treatment", "Other rinse off treatment", "Other non rinse off treatment", "SOIN SANS RINCAGE", "SOIN A RINCER", "Anti-hair loss treatment", "Mask (hair)", "Liquid lotion", "Non rinse off serum"), "Fonction"] = "Treatment"
 
 data[data$Fonction %in% c("Styling gel spray", "Styling gel jar", "COIFFANTS - PATE", "COIFFANTS-PATE","COIFFANTS-MOUSSES", "Other styling gel", "Styling gel tube"), "Fonction"] = "Styling gel"
-data[data$Fonction %in% c("Hairstyling foam", "Styling gel jar", "COIFFANTS - PATE"), "Fonction"] = "Styling foam"
+data[data$Fonction %in% c("Hairstyling foam", "Styling gel jar", "COIFFANTS - PATE", "Other styling"), "Fonction"] = "Styling foam"
 
 data[data$Fonction %in% c("COLORATION DIRECTE", "Other hair color", "Temporary hair color", "Bonders"), "Fonction"] = "Other hair color"
 
@@ -29,17 +40,16 @@ data[data$Fonction %in% c("Hair spray", "COIFFANTS - SPRAY", "Non rinse off spra
 data[data$Fonction %in% c("Non rinse off cream", "COIFFANTS - CREME"), "Fonction"] = "Non rinse off cream"
 data[data$Fonction %in% c("RENFORCATEURS", "Conditioner"), "Fonction"] = "Conditioner"
 
-data[data$Fonction %in% c("Other styling", "Conditioner"), "Fonction"] = "DIVERS PAYANT"
-
 data[data$SousAxe == "Hair color", "SousAxe"] = "HAIRCOLOR"
 data[data$SousAxe == "Styling", "SousAxe"] = "STYLING"
 data[data$SousAxe == "SOINS", "SousAxe"] = "Hair Care"
-Analyse produits/paniers
+```
 
-Dataframe produits unique (MOYEN UTILE)
+## Analyse produits/paniers
 
-data_clean <- data[data$Classe == "REVENTE" & data$Montant >= 0, c(1:10, 26, 27)]
-
+#### Dataframe produits unique (MOYEN UTILE)
+```{r}
+data_clean <- data[data$Classe == "REVENTE" & data$Montant >= 0, c(1:10, 27, 28)]
 library(plyr)
 produits_unique <- ddply(data_clean, .(Référence), summarize, Signature = head(Signature, 1), Marque = head(Marque, 1), SousMarque = head(SousMarque, 1), SousAxe = head(SousAxe, 1), Classe = head(Classe, 1), Fonction = head(Fonction, 1), Produit = head(Produit, 1), EAN = head(EAN, 1), Quantité = sum(Quantité), Montant = sum(Montant))
 
@@ -48,8 +58,10 @@ produits_unique_clean$Classe <- NULL
 produits_unique_clean$Signature <- NULL
 produits_unique_clean$Ean <- NULL
 valid_reference <- as.vector(produits_unique_clean$Référence)
-Matrice de design
+```
 
+#### Matrice de design
+```{r}
 # Matrice avant 2016 ou on enlève les remises et les reprises
 data_mature <- data[data$Ouverture < 2015 & data$MoisAnnee < 201600 & data$Classe == "REVENTE" & data$Montant >= 0,]
 dim(data_mature)
@@ -60,45 +72,228 @@ data_all_dummy <- with(data_mature,
 
 data_mature = cbind(data_mature, data_all_dummy)
 
-## On remplace par les quantités dans la matrice d'occurence
-## A COMMENTER SI ON VEUT JUSTE 1 PAR ACHAT
-for(j in 1:dim(data_mature)[1]){
-  reference = data_mature[j,'Référence']
+
+#################################
+#################################
+
+# On ajoute par référence les dates de premier achat et de dernier achat
+data_mature_copy <- data_mature
+for(j in 1:dim(data_mature_copy)[1]){
+  reference = data_mature_copy[j,'Référence']
   reference = gsub(' ','.',reference)
   reference = gsub('/','.',reference)
   column_name <- paste('Référence', reference, sep='')
-  data_mature[j, column_name] <- data_mature[j, 27]
+  data_mature_copy[j, column_name] <- data_mature_copy[j, 26]
 }
 
-
-summary(data_mature)
-for(i in 29:dim(data_mature)[2]){
-  data_mature[is.na(data_mature[,i]),i] = 0
+summary(data_mature_copy)
+for(i in 29:dim(data_mature_copy)[2]){
+  data_mature_copy[is.na(data_mature_copy[,i]),i] = 0
 }
-summary(data_mature)
+summary(data_mature_copy)
 
 
-data_mature$Référence = NULL
+data_mature_copy$Référence = NULL
 
 # On aggrège tous les résultats en sommant les quantités
-data_aggregate_brutal <- data_mature[,c(14, 28:dim(data_mature)[2])]
-for(i in c(1:dim(data_aggregate_brutal)[2])){
+data_aggregate_brutal_copy <- data_mature_copy[,c(14, 28:dim(data_mature_copy)[2])]
+data_aggregate_brutal_copy1 <- data_mature_copy[,c(14, 28:dim(data_mature_copy)[2])]
+
+for(i in c(2:dim(data_aggregate_brutal_copy)[2])){
+  data_aggregate_brutal_copy[,i]<-as.numeric(data_aggregate_brutal_copy[,i])
+  data_aggregate_brutal_copy1[,i]<-as.numeric(data_aggregate_brutal_copy1[,i])
+}
+data_aggregate_sum_copy <- aggregate(. ~ SIRET, data_aggregate_brutal_copy, FUN = max)
+
+#On remplace par 201800 les colonnes à 0 pour avoir le vrai min
+for(i in 2:dim(data_aggregate_brutal_copy1)[2]){
+  data_aggregate_brutal_copy1[data_aggregate_brutal_copy1[,i] == 0, i] = 201800
+}
+data_aggregate_sum_copy1 <- aggregate(. ~ SIRET, data_aggregate_brutal_copy1, FUN = min)
+#On reremplace les 201800 par des 0
+for(i in 2:dim(data_aggregate_sum_copy1)[2]){
+  data_aggregate_sum_copy1[data_aggregate_sum_copy1[,i] == 201800, i] = 0
+}
+
+# On change le nom des colones
+colnames(data_aggregate_sum_copy)[-1] <- paste(colnames(data_aggregate_sum_copy)[-1], 'DATE_MAX', sep = '/')
+colnames(data_aggregate_sum_copy1)[-1] <- paste(colnames(data_aggregate_sum_copy1)[-1], 'DATE_MIN', sep = '/')
+
+# On enlève la Corse et les Siret 00
+indice <- as.numeric(row.names(data_aggregate_sum_copy[data_aggregate_sum_copy$SIRET == 43969784800034,]))
+indice <- c(indice, 1, 2)
+data_aggregate_sum_copy <- data_aggregate_sum_copy[c(-indice),]
+data_aggregate_sum_copy1 <- data_aggregate_sum_copy1[c(-indice),]
+
+# On supprime merge data_aggregate_sum et data_aggregate_copy
+data_aggregate_sum_copy <- cbind(data_aggregate_sum_copy, data_aggregate_sum_copy1)
+
+# On ajoute une colonne durée qui est la durée entre le premier et le dernier achat
+for(name in colnames(data_aggregate_sum_copy1)[-1]){
+  column_name <- strsplit(name, "/")[[1]][1]
+  name_max <- paste(column_name, 'DATE_MAX', sep = '/')
+  name_min <- paste(column_name, 'DATE_MIN', sep = '/')
+  new_name <- paste(column_name,'DUREE', sep = '/')
+  data_aggregate_sum_copy[,new_name] <- (data_aggregate_sum_copy[,name_max]-data_aggregate_sum_copy[,name_min])%/%100 * 12 + (data_aggregate_sum_copy[,name_max]-data_aggregate_sum_copy[,name_min])%% 100
+}
+
+data_aggregate_sum_copy <- data_aggregate_sum_copy[,order(names(data_aggregate_sum_copy))]
+dim(data_aggregate_sum_copy)
+
+###########
+###########
+###########
+
+# On compte le nombre d'achat plutot que le montant/quantite
+data_mature_copy <- data_mature
+
+for(i in 29:dim(data_mature_copy)[2]){
+  data_mature_copy[is.na(data_mature_copy[,i]),i] = 0
+}
+summary(data_mature_copy)
+
+data_mature_copy$Référence = NULL
+
+# On aggrège tous les résultats en sommant les quantités
+data_aggregate_brutal <- data_mature_copy[,c(14, 28:dim(data_mature_copy)[2])]
+
+for(i in c(2:dim(data_aggregate_brutal)[2])){
   data_aggregate_brutal[,i]<-as.numeric(data_aggregate_brutal[,i])
 }
-data_aggregate_sum <- aggregate(data_aggregate_brutal, by=list(data_aggregate_brutal$SIRET), FUN = sum)
+data_aggregate_sum_achat <- aggregate(. ~ SIRET, data_aggregate_brutal, FUN = sum)
 
-produits <- data_aggregate_sum
-produits$Group.1 = NULL
-produits$SIRET = NULL
-produits = t(produits)
+colnames(data_aggregate_sum_achat)[-1] <- paste(colnames(data_aggregate_sum_achat)[-1], 'ACHAT', sep = '/')
 
-# On ajoute la variable nombre de produits achetés
+# On enlève la Corse et les Siret 00
+indice <- as.numeric(row.names(data_aggregate_sum_achat[data_aggregate_sum_achat$SIRET == 43969784800034,]))
+indice <- c(indice, 1, 2)
+data_aggregate_sum_achat <- data_aggregate_sum_achat[c(-indice),]
 
-A FAIRE
+######
+#####
 
-produit_achete <- function(x){
-  return(min(1,x))
+# On ajoute la fréquence d'achat
+
+data_aggregate_sum_copy <- cbind(data_aggregate_sum_copy, data_aggregate_sum_achat)
+
+for(name in colnames(data_aggregate_sum_achat)[-1]){
+  column_name <- strsplit(name, "/")[[1]][1]
+  name_duree <- paste(column_name, 'DUREE', sep = '/')
+  name_achat <- paste(column_name, 'ACHAT', sep = '/')
+  new_name <- paste(column_name,'FREQ_CORRECTED', sep = '/')
+  data_aggregate_sum_copy[data_aggregate_sum_copy[,name_achat] == 0, name_achat] <- -1
+  data_aggregate_sum_copy[,new_name] <-  data_aggregate_sum_copy[,name_duree]/(data_aggregate_sum_copy[,name_achat])
+  data_aggregate_sum_copy[data_aggregate_sum_copy[,name_achat] == -1, name_achat] <- 0
+  data_aggregate_sum_copy[data_aggregate_sum_copy[,new_name] < 0, new_name] <- 0 # Déja à zéro si tout est ok
 }
 
-On peut faire du clustering par produit
-On peut faire des matrices de corrélations par monogram, par bigram etc ... pour créer des paniers de produits. Discuter au tél avec le data scientist d'ACCENTURE
+data_aggregate_sum_copy <- data_aggregate_sum_copy[,order(names(data_aggregate_sum_copy))]
+dim(data_aggregate_sum_copy)
+
+###########
+###########
+###########
+
+# On ajoute la variable nombre de produits achetés
+quantite_data_aggregate <- data_aggregate_sum_achat[,c(-1)]
+quantite_data_aggregate[quantite_data_aggregate[,] > 0] <- 1
+
+data_aggregate_sum_copy$quantiteTotal <- rowSums(quantite_data_aggregate)
+data_aggregate_sum_copy <- data_aggregate_sum_copy[,order(names(data_aggregate_sum_copy))]
+
+##############
+##############
+##############
+
+## On remplace par les quantités dans la matrice d'occurence
+## A COMMENTER SI ON VEUT JUSTE 1 PAR ACHAT
+
+data_mature_copy <- data_mature
+for(j in 1:dim(data_mature_copy)[1]){
+  reference = data_mature_copy[j,'Référence']
+  reference = gsub(' ','.',reference)
+  reference = gsub('/','.',reference)
+  column_name <- paste('Référence', reference, sep='')
+  data_mature_copy[j, column_name] <- data_mature_copy[j, 27]
+}
+
+for(i in 29:dim(data_mature_copy)[2]){
+  data_mature_copy[is.na(data_mature_copy[,i]),i] = 0
+}
+summary(data_mature_copy)
+
+
+data_mature_copy$Référence = NULL
+
+# On aggrège tous les résultats en sommant les quantités
+data_aggregate_brutal <- data_mature_copy[,c(14, 28:dim(data_mature_copy)[2])]
+
+for(i in c(2:dim(data_aggregate_brutal)[2])){
+  data_aggregate_brutal[,i]<-as.numeric(data_aggregate_brutal[,i])
+}
+data_aggregate_sum_quantite <- aggregate(. ~ SIRET, data_aggregate_brutal, FUN = sum)
+
+colnames(data_aggregate_sum_quantite)[-1] <- paste(colnames(data_aggregate_sum_quantite)[-1], 'QUANTITE', sep = '/')
+
+# On enlève la Corse et les Siret 00
+indice <- as.numeric(row.names(data_aggregate_sum_quantite[data_aggregate_sum_quantite$SIRET == 43969784800034,]))
+indice <- c(indice, 1, 2)
+data_aggregate_sum_quantite <- data_aggregate_sum_quantite[c(-indice),]
+
+##########
+#########
+#########
+
+# On somme les montants plutot que les quantités
+data_mature_copy <- data_mature
+
+for(j in 1:dim(data_mature_copy)[1]){
+  reference = data_mature_copy[j,'Référence']
+  reference = gsub(' ','.',reference)
+  reference = gsub('/','.',reference)
+  column_name <- paste('Référence', reference, sep='')
+  data_mature_copy[j, column_name] <- data_mature_copy[j, 28]
+}
+
+for(i in 29:dim(data_mature_copy)[2]){
+  data_mature_copy[is.na(data_mature_copy[,i]),i] = 0
+}
+summary(data_mature_copy)
+
+data_mature_copy$Référence = NULL
+
+# On aggrège tous les résultats en sommant les quantités
+data_aggregate_brutal <- data_mature_copy[,c(14, 28:dim(data_mature_copy)[2])]
+
+for(i in c(2:dim(data_aggregate_brutal)[2])){
+  data_aggregate_brutal[,i]<-as.numeric(data_aggregate_brutal[,i])
+}
+data_aggregate_sum_montant <- aggregate(. ~ SIRET, data_aggregate_brutal, FUN = sum)
+
+colnames(data_aggregate_sum_montant)[-1] <- paste(colnames(data_aggregate_sum_montant)[-1], 'MONTANT', sep = '/')
+
+# On enlève la Corse et les Siret 00
+indice <- as.numeric(row.names(data_aggregate_sum_montant[data_aggregate_sum_montant$SIRET == 43969784800034,]))
+indice <- c(indice, 1, 2)
+data_aggregate_sum_montant <- data_aggregate_sum_montant[c(-indice),]
+
+##########
+##########
+##########
+
+# On concatène les quantités et montants
+
+data_aggregate_sum <- cbind(data_aggregate_sum_copy, data_aggregate_sum_quantite)
+data_aggregate_sum <- cbind(data_aggregate_sum, data_aggregate_sum_montant)
+data_aggregate_sum <- data_aggregate_sum[,order(names(data_aggregate_sum))]
+
+##########
+##########
+##########
+##########
+#########
+
+produits <- data_aggregate_sum
+produits = t(produits)
+
+```
