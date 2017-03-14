@@ -21,7 +21,7 @@ On essaie de prédire le chiffre d'affaire par mois de l'entreprise par produit.
 ## R Markdown
 
 ```{r}
-setwd("/Users/oliverousseau/Documents/BigData for Business/Cours/Oreal Data Camp")
+setwd("C:/Users/Ambroise Prevel/Dropbox/Polytechnique/Datacamp Accenture/seance3")
 library(ggplot2)
 ```
 
@@ -29,7 +29,7 @@ On soigne un peu les données en rassemblant les trucs similaires.
 On ne s'intéressera qu'à la sous-hiérarchie référence et pas plus bas
 
 ```{r}
-data <- read.table("~/Documents/BigData for Business/Cours/Oreal Data Camp/datas/POC_RK_2014_2017.CSV", sep=";", quote="\"", encoding = 'latin1', header = T)
+data <- read.table("POC_RK_2014_2017.CSV", sep=";", quote="\"", encoding = 'latin1', header = T)
 
 data$Signature <- as.factor(data$Signature)
 data$EAN <- as.factor(data$EAN)
@@ -71,7 +71,7 @@ data_mature_copy <- data_mature
 data_mature_copy$nb_achat <- 1
 
 library(plyr)
-data_mature_copy <- ddply(data_mature_copy, .(Référence, SIRET),  summarize, nb_achat = sum(nb_achat), Quantité = sum(Quantité), Montant = sum(Montant), date_debut = min(MoisAnnee), date_fin = max(MoisAnnee))
+data_mature_copy <- ddply(data_mature_copy, .(Référence, SIRET, CodePostal),  summarize, nb_achat = sum(nb_achat), Quantité = sum(Quantité), Montant = sum(Montant), date_debut = min(MoisAnnee), date_fin = max(MoisAnnee))
 
 data_mature_copy[,'Durée'] <- (data_mature_copy[,"date_fin"]%/%100-data_mature_copy[,"date_debut"]%/%100) * 12 + (data_mature_copy[,"date_fin"]%% 100-data_mature_copy[,"date_debut"]%% 100)
 
@@ -81,3 +81,45 @@ data_mature_copy <- data_mature_copy[data_mature_copy$date_fin > 201512,]
 
 data_mature_copy$CA_mois <-  (data_mature_copy$nb_achat-1)/data_mature_copy$nb_achat * data_mature_copy$Montant / data_mature_copy$Durée
 data_mature_copy$Quantite_mois <-  (data_mature_copy$nb_achat-1)/data_mature_copy$nb_achat * data_mature_copy$Quantité / data_mature_copy$Durée
+```
+
+```{r}
+##Données externes
+ext <- read.csv("external_data.csv", na.strings = c("NA", "NULL", "%N/A"))
+ext <- ext[, !colnames(ext)%in%c("Nom.de.commune", "INSEE")]
+ext$X..retraités.préretraités..2013. <- as.numeric(as.character(ext$X..retraités.préretraités..2013.))
+ext$X..hommes.dans.les.15.64..2013. <- as.numeric(as.character(ext$X..hommes.dans.les.15.64..2013.))
+ext$X..de.chômeurs..dans.les.actifs...2013. <- as.numeric(as.character(ext$X..de.chômeurs..dans.les.actifs...2013.))
+ext$X..inactifs.non.retraités..2013. <- as.numeric(as.character(ext$X..inactifs.non.retraités..2013.))
+ext <- aggregate(ext, by=list(ext$Codepos), FUN=mean)
+ext <- ext[,2:length(colnames(ext))]
+```
+
+```{r}
+data_salons <- c("SIRET", "CodePostal", "NbEmployes", "PrixColox")
+salons <- data[, data_salons]
+library(dplyr)
+salons <- distinct(salons, SIRET, .keep_all=TRUE)
+salons[salons=="NULL"] <- NA
+```
+
+```{r}
+salons <- merge(salons, ext, by.x="CodePostal", by.y="Codepos", all.x = TRUE, all.y = FALSE)
+```
+
+```{r}
+salons <- salons[, !colnames(salons) %in% c("INSEE", "Nom.de.commune")]
+```
+
+```{r}
+#design_mat <- merge(data_mature_copy, salons, by= "SIRET")
+design_mat <- left_join(data_mature_copy, salons, by="SIRET")
+```
+
+```{r}
+removing = c("SIRET", "CodePostal.x", "CodePostal.y", "nb_achat", "Quantité", "Montant", "date_debut", "date_fin", "Durée", "Quantite_mois")
+
+design_mat = design_mat[, !colnames(design_mat) %in% removing]
+
+design_mat$PrixColox <- as.integer(as.character(design_mat$PrixColox))
+```
