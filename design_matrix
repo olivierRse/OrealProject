@@ -1,0 +1,83 @@
+---
+title: "GenerateBrutalDesignMatrix"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Description
+
+On réalise la matrice de design. Les choix faits sont les suivants pour le moment:
+
+On ne considère que les magasins ayant ouvert avant 2016: au moins 1 an d'expérience.
+
+Pour l'instant, on ne considère par magasin que les produits qui ont au moins été vendus dans les 6 derniers mois pendant une durée supérieure ou égale à 3 mois.
+
+On essaie de prédire le chiffre d'affaire par mois de l'entreprise par produit. On divise donc le chiffre d'affaire global par la durée d'achat
+
+
+## R Markdown
+
+```{r}
+setwd("/Users/oliverousseau/Documents/BigData for Business/Cours/Oreal Data Camp")
+library(ggplot2)
+```
+
+On soigne un peu les données en rassemblant les trucs similaires.
+On ne s'intéressera qu'à la sous-hiérarchie référence et pas plus bas
+
+```{r}
+data <- read.table("~/Documents/BigData for Business/Cours/Oreal Data Camp/datas/POC_RK_2014_2017.CSV", sep=";", quote="\"", encoding = 'latin1', header = T)
+
+data$Signature <- as.factor(data$Signature)
+data$EAN <- as.factor(data$EAN)
+data$Montant <- as.numeric(as.character(data$Montant))
+data$Quantité <- as.numeric(as.character(data$Quantité))
+
+removing  = c("FreqVisite", "DUNS", "Axe", "N")
+data <- data[, !colnames(data) %in% removing ]
+
+data[data$Fonction %in% c("Regular shampoo", "SHAMPOOING"), "Fonction"] = "Shampoo"
+data[data$Fonction %in% c("LAQUES", "Lacquer", "Wax", "Wax / Clay", "GELS COIFFANTS", "Clay", "COIFFANTS - CIRE"), "Fonction"] = "Wax / Clay"
+data[data$Fonction %in% c("Treatment", "Other rinse off treatment", "Other non rinse off treatment", "SOIN SANS RINCAGE", "SOIN A RINCER", "Anti-hair loss treatment", "Mask (hair)", "Liquid lotion", "Non rinse off serum"), "Fonction"] = "Treatment"
+
+data[data$Fonction %in% c("Styling gel spray", "Styling gel jar", "COIFFANTS - PATE", "COIFFANTS-PATE","COIFFANTS-MOUSSES", "Other styling gel", "Styling gel tube"), "Fonction"] = "Styling gel"
+data[data$Fonction %in% c("Hairstyling foam", "Styling gel jar", "COIFFANTS - PATE", "Other styling"), "Fonction"] = "Styling foam"
+
+data[data$Fonction %in% c("COLORATION DIRECTE", "Other hair color", "Temporary hair color", "Bonders"), "Fonction"] = "Other hair color"
+
+data[data$Fonction %in% c("Hair spray", "COIFFANTS - SPRAY", "Non rinse off spray", "Sprays"), "Fonction"] = "Sprays"
+
+data[data$Fonction %in% c("Non rinse off cream", "COIFFANTS - CREME"), "Fonction"] = "Non rinse off cream"
+data[data$Fonction %in% c("RENFORCATEURS", "Conditioner"), "Fonction"] = "Conditioner"
+
+data[data$SousAxe == "Hair color", "SousAxe"] = "HAIRCOLOR"
+data[data$SousAxe == "Styling", "SousAxe"] = "STYLING"
+data[data$SousAxe == "SOINS", "SousAxe"] = "Hair Care"
+```
+
+## Analyse produits/paniers
+
+#### Matrice de design
+```{r}
+# Matrice avant 2016 ou on enlève les remises et les reprises
+data_mature <- data[data$Ouverture < 2016 & data$MoisAnnee < 201800 & data$Classe == "REVENTE" & data$Montant >= 0 & data$Quantité > 0,]
+dim(data_mature)
+data_mature$Référence <- droplevels(data_mature$Référence)
+
+data_mature_copy <- data_mature
+data_mature_copy$nb_achat <- 1
+
+library(plyr)
+data_mature_copy <- ddply(data_mature_copy, .(Référence, SIRET),  summarize, nb_achat = sum(nb_achat), Quantité = sum(Quantité), Montant = sum(Montant), date_debut = min(MoisAnnee), date_fin = max(MoisAnnee))
+
+data_mature_copy[,'Durée'] <- (data_mature_copy[,"date_fin"]%/%100-data_mature_copy[,"date_debut"]%/%100) * 12 + (data_mature_copy[,"date_fin"]%% 100-data_mature_copy[,"date_debut"]%% 100)
+
+data_mature_copy <- data_mature_copy[data_mature_copy$Durée != 0,]
+data_mature_copy <- data_mature_copy[data_mature_copy$Quantité > 3,]
+data_mature_copy <- data_mature_copy[data_mature_copy$date_fin > 201512,]
+
+data_mature_copy$CA_mois <-  (data_mature_copy$nb_achat-1)/data_mature_copy$nb_achat * data_mature_copy$Montant / data_mature_copy$Durée
+data_mature_copy$Quantite_mois <-  (data_mature_copy$nb_achat-1)/data_mature_copy$nb_achat * data_mature_copy$Quantité / data_mature_copy$Durée
