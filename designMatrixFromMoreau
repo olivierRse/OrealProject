@@ -91,9 +91,11 @@ data_mature_copy$CA_mois <-  (data_mature_copy$nb_achat-1)/data_mature_copy$nb_a
 data_mature_copy$Quantite_mois <-  (data_mature_copy$nb_achat-1)/data_mature_copy$nb_achat * data_mature_copy$Quantité / data_mature_copy$Durée
 
 data_mature_copy<- data_mature_copy[1:dim(data_mature_copy)[1]-1,]
+
+design_matrix_ambroise <- merge(data_mature_copy, data_entreprise, by = 'SIRET')
 ```
 
-## Matrice de design par magasin panier de vente
+## Matrice de design par magasin panier de vente (pas assez de données)
 ```{r}
 data_mature_copy1 <- data_mature_copy
 data_all_dummy <- with(data_mature_copy1,
@@ -101,28 +103,184 @@ data_all_dummy <- with(data_mature_copy1,
 data_mature$Référence <- NULL
 
 data_all_dummy$PanierProduits <- rowSums(data_all_dummy)
-
 data_mature_copy1 <- cbind(data_mature_copy1, data_all_dummy)
-
 data_mature_copy1 <- data_mature_copy1[,c(2,10,12:dim(data_mature_copy1)[2])]
-
 data_mature_copy1 <- aggregate(. ~ SIRET, data_mature_copy1, FUN = sum)
 
+design_matrix <- merge(data_entreprise, data_mature_copy1, by = 'SIRET')
 # On enlève la corse
 #data_mature_copy1 <- data_mature_copy1[-c(which(data_mature_copy1$SIRET == 43969784800034)),]
 #data_mature_copy1 <- data_mature_copy1[-c(1,2,3),]
 
-
-
 library(ggplot2)
-ggplot(data = data_mature_copy1) + geom_point(aes(x=PanierProduits, y=CA_mois))
+ggplot(data = design_matrix) + geom_density(aes(x=design_matrix$PanierProduits))
+
+ggplot(data = design_matrix) + geom_point(aes(x=PanierProduits, y=CA_mois))
+
+ggplot(data = design_matrix[design_matrix$PanierProduits < 60,]) + scale_y_continuous(limits = c(0, 2500)) + scale_x_continuous(limits = c(0,60)) + geom_point(aes(x=PanierProduits, y=CA_mois))
+
+ggplot(data = design_matrix[design_matrix$PanierProduits < 20,])+ scale_y_continuous(limits = c(0, 700)) + scale_x_continuous(limits = c(0,20)) + geom_point(aes(x=PanierProduits, y=CA_mois))
+
+ggplot(data = design_matrix) + scale_y_continuous(limits = c(0, 5100)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes)) + scale_color_gradient(low="grey", high="red") + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes), data = design_matrix)
+
+ggplot(data = design_matrix[design_matrix$PanierProduits < 60,])+ scale_y_continuous(limits = c(0, 2500)) + scale_x_continuous(limits = c(0,60)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes)) + scale_color_gradient(low="grey", high="red") + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes), data = design_matrix[design_matrix$PanierProduits < 60,])
+
+ggplot(data = design_matrix[design_matrix$PanierProduits < 30,])+ scale_y_continuous(limits = c(0, 700)) + scale_x_continuous(limits = c(0,30)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes)) + scale_color_gradient(low="grey", high="red") + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes), data = design_matrix[design_matrix$PanierProduits < 30,])
+
+# On compare avec la concurrence interne
+
+Interne_data1 <- read.csv2("~/Documents/BigData for Business/Cours/Oreal Data Camp/datas/pack/POC_Concurrence_Interne.csv")
+Interne_data <- Interne_data1
+
+#Interne_data$Montant <- as.numeric(as.character(Interne_data$Montant))
+
+Interne_data <- Interne_data[Interne_data$MoisAnnee > 201512 & Interne_data$GroupeArticle %in% c("Accessoires reventes", "Produit normal/vente", "Frais de port - ventes diverses") & Interne_data$Montant >= 0 & Interne_data$Quantite > 0,]
+
+
+
+Interne_data <- aggregate(. ~ SIRET+Signature, Interne_data[,c(1,7,12)], FUN = sum)
+Interne_data$Montant <- Interne_data$Montant / 12
+Interne_data <- merge(x = Interne_data, y = design_matrix, by = "SIRET", all.y = TRUE)
+
+Interne_data_Oreal <- Interne_data[Interne_data$Signature == "L'OREAL PROFESSIONNEL",]
+Interne_data_Oreal <- na.omit(Interne_data_Oreal)
+Interne_data_Kerastase <- Interne_data[Interne_data$Signature == "KERASTASE",]
+Interne_data_Kerastase <- na.omit(Interne_data_Kerastase)
+
+mean(design_matrix$CA_mois)
+mean(Interne_data_Oreal$Montant)
+mean(Interne_data_Kerastase$Montant)
+
+ggplot(data = design_matrix) + scale_y_continuous(limits = c(0, 7000)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = 'black')) + geom_point(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Oreal) + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = 'black'), data = design_matrix) + geom_smooth(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Oreal) #, method = 'gam')
+
+ggplot(data = design_matrix[design_matrix$PanierProduits < 60,]) + scale_y_continuous(limits = c(0, 2500)) + scale_x_continuous(limits = c(0,60)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = 'black')) + geom_point(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Oreal[Interne_data_Oreal$PanierProduits < 60,]) + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = 'black'), data = design_matrix[design_matrix$PanierProduits < 60,]) + geom_smooth(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Oreal[Interne_data_Oreal$PanierProduits < 60,]) #, method = 'gam')
+
+ggplot(data = design_matrix[design_matrix$PanierProduits < 20,])+ scale_y_continuous(limits = c(0, 750)) + scale_x_continuous(limits = c(0,20))  + geom_point(aes(x=PanierProduits, y=CA_mois, colour = 'black')) + geom_point(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Oreal[Interne_data_Oreal$PanierProduits < 20,]) + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = 'black'), data = design_matrix[design_matrix$PanierProduits < 20,]) + geom_smooth(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Oreal[Interne_data_Oreal$PanierProduits < 20,]) #, method = 'gam')
+
+ggplot(data = design_matrix) + scale_y_continuous(limits = c(0, 15000)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = 'black')) + geom_point(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Kerastase)  + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = 'black'), data = design_matrix) + geom_smooth(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Kerastase)
+
+ggplot(data = design_matrix[design_matrix$PanierProduits < 50,]) + scale_y_continuous(limits = c(0, 7000)) + scale_x_continuous(limits = c(0,50)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = 'black')) + geom_point(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Kerastase[Interne_data_Kerastase$PanierProduits < 50,]) + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = 'black'), data = design_matrix[design_matrix$PanierProduits < 50,]) + geom_smooth(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Kerastase[Interne_data_Kerastase$PanierProduits < 2500,]) #, method = 'gam')
+
+ggplot(data = design_matrix[design_matrix$PanierProduits < 20,])+ scale_y_continuous(limits = c(0, 3000)) + scale_x_continuous(limits = c(0,20)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = 'black')) + geom_point(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Kerastase[Interne_data_Kerastase$PanierProduits < 20,])+ geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = 'black'), data = design_matrix[design_matrix$PanierProduits < 20,]) + geom_smooth(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Kerastase[Interne_data_Kerastase$PanierProduits < 20,]) #, method = 'gam')
+
+# Pas de concurrence interne
 ```
 
-On merge
+On regarde le panier moyen pour chaque tranche de référence
 ```{r}
-design_matrix <- merge(data_mature_copy1, data_entreprise, by = 'SIRET')
-Y <- as.matrix(design_matrix$CA_mois)
-X <- as.matrix(design_matrix[,-c(2)])
-summary(X)
-library(glmnet)
+ggplot(data = design_matrix) + geom_density(aes(x=design_matrix$PanierProduits))
+```
+
+### On analyse la répartition des paniers pour les différents quantiles
+```{r}
+quantile(design_matrix$PanierProduits, probs = seq(0, 1, 0.1))
+```
+
+```{r}
+quantile_panier <- merge(data_produit[,c('Fonction', 'Référence')], data_mature_copy, by = 'Référence')
+
+quantile_panier <- quantile_panier[,c(2,3)]
+quantile_panier$nb_produit <- 1
+quantile_panier <- ddply(quantile_panier, .(Fonction, SIRET),  summarize, nb_produit = sum(nb_produit))
+
+quantile_panier <- merge(design_matrix[,c('SIRET', 'PanierProduits')], quantile_panier, by = 'SIRET')
+```
+
+```{r}
+quantile_panier$quantile <- 1
+quantile_panier[quantile_panier$PanierProduits %in% c(3:4), 'quantile'] <- 2
+quantile_panier[quantile_panier$PanierProduits %in% c(5:6), 'quantile'] <- 3
+quantile_panier[quantile_panier$PanierProduits %in% c(7:8), 'quantile'] <- 4
+quantile_panier[quantile_panier$PanierProduits %in% c(9:11), 'quantile'] <- 5
+quantile_panier[quantile_panier$PanierProduits %in% c(12:13), 'quantile'] <- 6
+quantile_panier[quantile_panier$PanierProduits %in% c(14:17), 'quantile'] <- 7
+quantile_panier[quantile_panier$PanierProduits %in% c(18:21), 'quantile'] <- 8
+quantile_panier[quantile_panier$PanierProduits %in% c(22:29), 'quantile'] <- 9
+quantile_panier[quantile_panier$PanierProduits >= 30, 'quantile'] <- 10
+```
+
+```{r}
+ggplot(data = quantile_panier[quantile_panier$quantile == 1,], aes(x = nb_produit, fill = Fonction)) + geom_bar(position = 'dodge')
+
+ggplot(data = quantile_panier[quantile_panier$quantile == 1,], aes(x = Fonction, y = nb_produit)) + geom_bar(stat = 'identity')
+
+quantile_panier_test <- quantile_panier
+quantile_panier_test$number <- 1
+quantile_panier_test <- ddply(quantile_panier_test, .(Fonction, quantile, nb_produit),  summarize, count = sum(number))
+
+ggplot(data = quantile_panier_test[quantile_panier_test$quantile == 3,]) + geom_line(aes(x = nb_produit, y = count, color = Fonction))
+```
+
+### Pour chaque quantile, on détermine le nombre de produits que l'on affiche par défaut
+```{r}
+i = 4
+quantile(design_matrix$PanierProduits, probs = seq(0, 1, 0.1))
+
+dim(quantile_panier[quantile_panier$quantile == i,])[1]
+
+ggplot(data = quantile_panier[quantile_panier$quantile == i,], aes(x = nb_produit, fill = Fonction)) + geom_bar(position = 'dodge')
+
+ggplot(data = quantile_panier[quantile_panier$quantile == i,], aes(x = Fonction, y = nb_produit)) + geom_bar(stat = 'identity')
+
+shampoo <- mean(quantile_panier[quantile_panier$quantile == i & quantile_panier$Fonction == 'Shampoo', 'nb_produit'])
+
+conditioner <- mean(quantile_panier[quantile_panier$quantile == i & quantile_panier$Fonction == 'Conditioner', 'nb_produit'])
+
+ggplot(data = quantile_panier_test[quantile_panier_test$quantile == i,]) + geom_line(aes(x = nb_produit, y = count, color = Fonction)) + geom_vline(xintercept = shampoo, color = 'seagreen2') + geom_vline(xintercept = conditioner, color = 'red')
+
+
+```
+
+```{r}
+panier_quantile = c()
+moyenne_panier = c()
+#i = 1
+dictionnaire = list(Shampoo = 3, Conditionner = 3, Styling_Foam = 2, Styling_Gel = 2, Treatment = 2, Wax_Clay = 2, Sprays = 2, Other_hair_color = 1, Non_rinse_off_cream = 1)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 2
+dictionnaire = list(Shampoo = 4, Conditionner = 3, Styling_Foam = 2, Styling_Gel = 2, Treatment = 2, Wax_Clay = 2, Sprays = 2, Other_hair_color = 1, Non_rinse_off_cream = 1)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 3
+dictionnaire = list(Shampoo = 5, Conditionner = 4, Styling_Foam = 2, Styling_Gel = 2, Treatment = 2, Wax_Clay = 2, Sprays = 2, Other_hair_color = 1, Non_rinse_off_cream = 1)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 4
+dictionnaire = list(Shampoo = 7, Conditionner = 5, Styling_Foam = 3, Styling_Gel = 3, Treatment = 3, Wax_Clay = 3, Sprays = 3, Other_hair_color = 2, Non_rinse_off_cream = 2)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 5
+dictionnaire = list(Shampoo = 8, Conditionner = 7, Styling_Foam = 3, Styling_Gel = 3, Treatment = 3, Wax_Clay = 3, Sprays = 3, Other_hair_color = 2, Non_rinse_off_cream = 2)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 6
+dictionnaire = list(Shampoo = 8, Conditionner = 8, Styling_Foam = 4, Styling_Gel = 4, Treatment = 4, Wax_Clay = 4, Sprays = 4, Other_hair_color = 2, Non_rinse_off_cream = 2)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 7
+dictionnaire = list(Shampoo = 10, Conditionner = 10, Styling_Foam = 4, Styling_Gel = 4, Treatment = 4, Wax_Clay = 4, Sprays = 6, Other_hair_color = 2, Non_rinse_off_cream = 2)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 8
+dictionnaire = list(Shampoo = 11, Conditionner = 11, Styling_Foam = 4, Styling_Gel = 4, Treatment = 4, Wax_Clay = 4, Sprays = 6, Other_hair_color = 2, Non_rinse_off_cream = 2)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 9
+dictionnaire = list(Shampoo = 15, Conditionner = 13, Styling_Foam = 4, Styling_Gel = 4, Treatment = 4, Wax_Clay = 4, Sprays = 6, Other_hair_color = 2, Non_rinse_off_cream = 2)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 10
+dictionnaire = list(Shampoo = 22, Conditionner = 30, Styling_Foam = 4, Styling_Gel = 8, Treatment = 4, Wax_Clay = 4, Sprays = 10, Other_hair_color = 2, Non_rinse_off_cream = 2)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
 ```
