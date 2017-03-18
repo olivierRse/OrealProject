@@ -1,0 +1,212 @@
+---
+title: "Prediction"
+author: "Ambroise Prevel, Olivier Rousseau, Antoine Moreau, Gustave Roche"
+date: "15 March 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/Ambroise Prevel/Dropbox/Polytechnique/Datacamp Accenture/seance3")
+```
+
+
+##Finalisation de la matrice de design  
+  
+  
+```{r}
+design_mat <- read.csv("design_matrix_ambroise.csv")
+```
+
+L'input est une matrice contenant les colonnes suivantes:
+```{r}
+to_keep <- c("Référence",             #nom du produit (cf données Redken)                                
+             "CA_mois",               #CA par mois (cf création de la matrice de design)     
+             "NbEmployes",            #Nb d'employés du salon (cf données Redken)
+             "PrixColox",             #Prix de la couleur (cf données Redken)
+             "MedianeNiveauDeVie",    #donnée INSEE de la commune du salon
+             "CSP_Artisans_Commercants_ChefsEntreprises_percent", #donnée INSEE de la commune du salon
+             "CSP_ProfessionsIntermediaires_percent", #donnée INSEE de la commune du salon
+             "CSP_Ouvriers_percent",                  #donnée INSEE de la commune du salon
+             "Pourcentage_chomeurs_dans_pop_active",  #donnée INSEE de la commune du salon
+             "Pourcentage_autres_inactifs_dans_pop",  #donnée INSEE de la commune du salon
+             "CSP_Agriculteurs_pourcentage",          #donnée INSEE de la commune du salon
+             "CSP_CadresEtProfsIntellectuellesSup_percent", #donnée INSEE de la commune du salon
+             "CSP_Employes_percent",                  #donnée INSEE de la commune du salon
+             "Pourcentage_Hommes",                    #donnée INSEE de la commune du salon
+             "Pourcentage_retraites_dans_pop"         #donnée INSEE de la commune du salon
+             )
+```
+
+```{r}
+design_mat2 <- design_mat[,to_keep]
+```
+
+Pour entrainer des régresseurs prédisant le chiffre d'affaire pour chaque produit, il nous faut avoir suffisamment de points de données pour ce produit. Le code ci-dessous nous permet de faire réaliser le comptage.
+```{r}
+count_prod <- NULL
+for (prod in levels(design_mat2$Référence)){
+  count_prod <- c(count_prod, a=dim(design_mat2[design_mat2$Référence==prod,])[1])
+  names(count_prod)[length(count_prod)] <- prod
+}
+print(count_prod[1:15]) #on affiche les 15 premiers produits
+```
+
+On ne garde que les produits pour lesquels on a plus de 100 pts de données.
+
+```{r}
+to_keep <- names(count_prod[count_prod>=100])
+print(paste(length(to_keep), "conservés sur", length(levels(factor(design_mat2$Référence)))))
+design_mat2_partielle <- design_mat2[design_mat2$Référence %in% to_keep,]
+```
+
+##Entrainement des régresseurs
+  
+Nous créons une boucle qui, pour chaque produit conservé, va créer une matrice de variable explicatives *X* et un vecteur cible *y* (CA/mois), et entrainer un random forest pour prédire le CA/mois en fonction des données du salon.  
+
+```{r}
+library(randomForest)
+
+design_mat2_partielle$Référence <- factor(design_mat2_partielle$Référence) #supprimons les "levels" vides
+produits <- levels(design_mat2_partielle$Référence) #récupérons la liste des produits
+regressors <- list() #cette liste va stocker les regresseurs entraînés
+for (prod in produits){                                                #pour chaque produit...
+  X <- design_mat2_partielle[design_mat2_partielle$Référence==prod, 3:length(colnames(design_mat2_partielle))]                             #...on crée la matrice X... 
+  y <- design_mat2_partielle[design_mat2_partielle$Référence==prod, 2] #...et le vecteur y
+  reg <- randomForest(X, y) #on entraine un random forest (500 arbres et une variable sur 3, par défaut)     
+  regressors[[prod]] <- reg #on stock le regresseur entrainé dans la liste
+}
+```
+
+Il est intéressant de regarder l'importance des variables dans les regresseurs. Chaque régresseur peut renvoyer l'importance des variables sous forme de vecteur. Additionnons les vecteurs issus de chaque régresseur (et donc de chaque produit), renormalisons le résultat, et affichons un graphique montrant quelles sont les variables les plus importantes sur l'ensemble des produits.
+
+```{r}
+library(ggplot2)
+
+v_imp <- regressors[[1]]$importance*0
+
+for (regr in regressors){
+  v_imp <- v_imp + regr$importance
+}
+v_imp <- as.data.frame(v_imp/max(v_imp))
+
+ggplot(data=v_imp)+geom_bar(aes(x=reorder(row.names(v_imp),IncNodePurity), y=IncNodePurity), stat="identity", fill=heat.colors(length(row.names(v_imp))))+coord_flip()+xlab("Variable")+ylab("Importance des variables")
+```
+
+##Reprédiction sur tous les magasins
+
+```{r}
+produits <- levels(factor(design_mat2_partielle$Référence)) #la liste des produits est toujours la même
+```
+
+On va créer une matrice des salonspour lesquels on veut des prédictions.  
+  
+On veut donc toutes les colonnes de la matrice de design précédente (design_mat2), en dehors de la cible ( CA/mois) et de la référence du produit. On veut aussi rajouter le SIRET, pour pouvoir garder une trace.  
+
+```{r}
+to_keep <- c("SIRET", colnames(design_mat2))               #on rajoute SIRET
+to_keep <- to_keep[!to_keep%in%c("CA_mois", "Référence")]  #on enlève CA_mois et Référence
+```
+
+```{r}
+a_predire <- unique(design_mat[,to_keep])  #on récupère tous les salons de la matrice du tout début
+```
+
+
+On récupère aussi la liste de tous les SIRET des salons pour lesquels prédire:  
+```{r}
+salons <- levels(factor(a_predire$SIRET))
+```
+
+On crée un dataframe prêt à recevoir les prédictions. Il contient 3 colonnes:  
+- SIRET ("SIRET")  
+- Référence produit ("Référence")  
+- Prédiction de CA/mois ("CA_mois_pred") *pas encore complétée*   
+```{r}
+produits_df <- data.frame("Référence"=produits)
+SIRET_df <- data.frame("SIRET"=salons)
+predictions <- merge(SIRET_df, produits_df, by=NULL) #produit cartésien des deux tableaux précédents
+predictions$CA_mois_pred <- -1 #on crée la troisième colonne en la remplissante de -1
+```
+
+Pour chaque salon, on crée le vecteur de variables explicatives, et pour chaque produit, on fait prédire le régresseur correspondant. Le résultat est stocké dans le tableau créé précédemment.  
+  
+```{r}
+total_it <- length(salons)*length(produits) #on calcule le nombre de prédictions total
+#ATTENTION, la boucle qui suit met plusieurs minutes à s'éxécuter
+for(salon in salons){                            #pour chaque salon...
+  X <- a_predire[a_predire$SIRET==salon,-c(1)]   #...on crée le vecteur de variables explicatives
+  for(prod in produits){                             #pour chaque produit...
+    prediction <- predict(regressors[[prod]], X)     #...on prédit le CA/mois réalisée par le salon
+    #...et on stock le résultat à la bonne ligne du tableau
+    predictions[(predictions$SIRET==salon)&(predictions$Référence==prod), "CA_mois_pred"] <- prediction
+  }
+}
+
+#REMARQUE: code facilement améliorable en inversant le rôle de salons et produits dans la boucle. Cela nous permettrait d'utiliser la fonction predict sur des matrices contenant les données de plusieurs salons, et donc d'appeler cette fonctions beaucoup moins de fois.
+```
+  
+Pour un salon existant donné, on peut voir les prédictions faites pour chaque produit:
+```{r}
+#exemple pour le salon de SIRET 437554710
+df_437554710 <- predictions[(predictions$SIRET==437554710),]
+df_437554710 <- df_437554710[order(-df_437554710$CA_mois_pred),] #on trie les produits en fonction du CA prédit
+head(df_437554710, 10) #on affiche les 10 premiers
+```
+
+##Prédiction pour un nouveau salon
+
+Si le salon est nouveau (nous n'avons que le prix de la coloration, le nombre d'employés et le code postal du salon), voici comment prédire:  
+```{r}
+#prenons l'exemple d'un salon de la commune de Sainte Foy-lès-Lyon (69110), 3 employés, où le prix de la coloration est de 52€.
+
+new_salon <- data.frame("Codepos"=69110, "NbEmployes"=3, "PrixColox"=52)
+
+#on importe les données externes
+ext <- read.csv("external_data.csv")
+
+#on "colle" à notre nouveau salon les données correspondantes à sa commune
+new_salon <- merge(new_salon, ext)
+
+#on enlève les colonnes indésirables
+new_salon <- new_salon[, !colnames(new_salon)%in%c("Codepos", "INSEE", "Nom.de.commune")]
+
+#on passe toutes les colonnes en format numeric
+for (i in 1:length(colnames(new_salon))){
+  new_salon[,i] <- as.numeric(as.character(new_salon[,i]))
+}
+
+#on regarde si les colonnes sont bien dans le bon ordre (en comparant avec la variable X qui contient un input correct)
+for(i in 1:13){print(paste(i, "####",colnames(X)[i], "####", colnames(new_salon)[i]))}
+
+#on remets les colonnes dans le bon ordre
+new_salon_X <- new_salon[,c(1,2,3,5,7,9,11,13,4,6,8,10,12)]
+
+#on vérifie que ça a marché et on ajuste le nom des colonnes
+for(i in 1:13){print(paste(i, "####",colnames(X)[i], "####", colnames(new_salon_X)[i]))}
+colnames(new_salon_X) <- colnames(X)
+
+#on fait la prédiction pour tous les produits
+pred <- NULL
+for(prod in produits){
+  pred <- c(pred, predict(regressors[[prod]], new_salon_X))
+}
+predictions_new <- data.frame("Référence"=produits, "CA_mois_pred"=pred)
+
+#on affiche le top 10 des produits en fonction avec la meilleure prédiction
+head(predictions_new[order(-predictions_new$CA_mois_pred),],10)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
