@@ -92,6 +92,11 @@ data_mature_copy$Quantite_mois <-  (data_mature_copy$nb_achat-1)/data_mature_cop
 
 data_mature_copy<- data_mature_copy[1:dim(data_mature_copy)[1]-1,]
 
+# Matrice affinée enlevant les valeurs un peu absurdes (hypothèses à tester et modifier): 
+##data_mature_copy1 <- data_mature_copy1[data_mature_copy1$freq < 6,]
+##data_mature_copy1 <- data_mature_copy1[data_mature_copy1$CA_mois > 10,]
+##data_mature_copy1 <- data_mature_copy1[data_mature_copy1$Durée > 2,]
+
 design_matrix_ambroise <- merge(data_mature_copy, data_entreprise, by = 'SIRET')
 ```
 
