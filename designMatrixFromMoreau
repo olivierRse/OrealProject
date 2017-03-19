@@ -17,18 +17,14 @@ Pour l'instant, on ne considère par magasin que les produits qui ont au moins �
 
 On essaie de prédire le chiffre d'affaire par mois de l'entreprise par produit. On divise donc le chiffre d'affaire global par la durée d'achat
 
+# Prédiction
 
-## R Markdown
+## Creation de la matrice de design
 
+#### Préprocessing
 ```{r}
-setwd("/Users/oliverousseau/Documents/BigData for Business/Cours/Oreal Data Camp")
-library(ggplot2)
-```
+# Je pars de la ma
 
-On soigne un peu les données en rassemblant les trucs similaires.
-On ne s'intéressera qu'à la sous-hiérarchie référence et pas plus bas
-
-```{r}
 data <- read.csv("~/Documents/BigData for Business/Cours/Oreal Data Camp/datas/Moreau/final_cleaned_data.csv", row.names=1)
 
 data$Signature <- as.factor(data$Signature)
@@ -38,6 +34,8 @@ data$Quantité <- as.numeric(as.character(data$Quantité))
 
 removing  = c("FreqVisite", "DUNS", "Axe", "N")
 data <- data[, !colnames(data) %in% removing ]
+
+# On cleane en rassemblant les fonctions
 
 data[data$Fonction %in% c("Regular shampoo", "SHAMPOOING"), "Fonction"] = "Shampoo"
 data[data$Fonction %in% c("LAQUES", "Lacquer", "Wax", "Wax / Clay", "GELS COIFFANTS", "Clay", "COIFFANTS - CIRE"), "Fonction"] = "Wax / Clay"
@@ -53,94 +51,127 @@ data[data$Fonction %in% c("Hair spray", "COIFFANTS - SPRAY", "Non rinse off spra
 data[data$Fonction %in% c("Non rinse off cream", "COIFFANTS - CREME"), "Fonction"] = "Non rinse off cream"
 data[data$Fonction %in% c("RENFORCATEURS", "Conditioner"), "Fonction"] = "Conditioner"
 
+# On cleane en rassemblant les sous-axes
 data[data$SousAxe == "Hair color", "SousAxe"] = "HAIRCOLOR"
 data[data$SousAxe == "Styling", "SousAxe"] = "STYLING"
 data[data$SousAxe == "SOINS", "SousAxe"] = "Hair Care"
 
-data_vente <- data[,c(1,7,29,32,37:39)]
-data_entreprise <- data[!duplicated(data[,c(1)]),c(1:25)]
-data_produit <- data[!duplicated(data[, c(29)]),c(26:36)]
+# On sépare en nos 3 matrices de travail
+data_vente <- data[,c(1,9,30,34,39:41)]
+data_entreprise <- data[!duplicated(data[,c(1)]),c(1:26)]
+data_produit <- data[!duplicated(data[, c(30)]),c(27:38)]
 ```
 
-## Analyse produits/paniers
+#### Création de la matrice de design
 
-#### Matrice de design
+##### Hypothèses
+
+Pour créer notre matrcide de design, nous avons fait des hypothèses afin de rassembler les ventes par magasins. Elles sont les suivantes:
+  - On ne considère que les magasins ayant ouvert avant 2016 afin d'avoir au moins une année de données de vente
+  - On ne descend à la granularité produit que jusq'aux "références"" (et non jusqu'au "produit"" ou "nuances"). Il est possible d'étendre l'étude jusqu'aux "produits"" ou bien même de la restreindre aux "sous-marques"
+  - On ne considère que les reventes
+  - On ne considère que les montants positifs: on ne prend pas en compte les remises dans notre étude
+  - On ne considère que les quantités négatives: on ne considère pas les reprises de certains produits pour simplifier notre étude. Il pourrait éventuellement être intéressant de les étudiers pour voir des produits qui ne fonctionnent pas
+  - On ne considère que les produits actuellement vendus en magasin, c'est à dire ayant été achetés il y a moins de 6 mois par le magasin. (Il est éventuellement possible de modifier cette fréquence arbitraire ou de l'affiner en fonction du type de produit vendu)
+  
+  
 ```{r}
-# Matrice avant 2016 ou on enlève les remises et les reprises
-data_mature <- data_vente[data_vente$Ouverture < 2016 & data_vente$MoisAnnee < 201800 & data_vente$Classe == "REVENTE" & data_vente$Montant >= 0 & data_vente$Quantité > 0,]
-dim(data_mature)
+# Choix des ventes adéquates
+data_mature <- data_vente[data_vente$Ouverture < 2016 & data_vente$MoisAnnee < 201700 & data_vente$Classe == "REVENTE" & data_vente$Montant >= 0 & data_vente$Quantité > 0,]
+
 data_mature$Référence <- droplevels(data_mature$Référence)
 
 data_mature_copy <- data_mature
+
+# On groupe les achats d'un produit ayant eu lieu le même mois par la même entreprise pour avoir un seul achat de produit par mois.
+
+library(plyr)
+
+data_mature_copy <- ddply(data_mature_copy, .(Référence, SIRET, MoisAnnee), summarize, Quantité = sum(Quantité), Montant = sum(Montant))
+
+# On crée cette variable pour compter le nombre total d'achat (En n'en comptant qu'un seul par mois d'après l'aggregation juste au dessus)
 data_mature_copy$nb_achat <- 1
+
+# On aggrège les ventes par magasin et par référence en sommant les ventes totales du produit sur toutes les années. Il est vrai qu'en moyennant les achats du produit sur la durée on perd un peu l'évolution temporelle des ventes d'un produit au sein d'un magasin. Pour cela l'idéal serait d'avoir les données non pas entrantes mais sortantes du magasin.
+
+#On aurait pu éventuellement mettre une limite basse pour limiter ce phénomène et ne pas sommer jusqu'à des ventes en 2014 par exemple. Mais vu qur l'on divise ensuite par la durée ce n'est pas trop grave. 
 
 library(plyr)
 data_mature_copy <- ddply(data_mature_copy, .(Référence, SIRET),  summarize, nb_achat = sum(nb_achat), Quantité = sum(Quantité), Montant = sum(Montant), date_debut = min(MoisAnnee), date_fin = max(MoisAnnee))
 
+# On crée la variable durée qui est la date entre la première et la dernière vente de notre produit.
 data_mature_copy[,'Durée'] <- (data_mature_copy[,"date_fin"]%/%100-data_mature_copy[,"date_debut"]%/%100) * 12 + (data_mature_copy[,"date_fin"]%% 100-data_mature_copy[,"date_debut"]%% 100)
 
+# On sélectionne les ventes où le produit a été acheté au moins 3 fois par le magasin à deux mois distincts et dont le dernier achat et il y a moins de 6 mois. On ne considère ainsi que les produits encore vendus au sein du magasin
 data_mature_copy <- data_mature_copy[data_mature_copy$Durée != 0,]
 data_mature_copy <- data_mature_copy[data_mature_copy$nb_achat > 2,]
 data_mature_copy <- data_mature_copy[data_mature_copy$date_fin > 201605,]
 
-
+# On calcule la fréquence d'achat. 
 data_mature_copy$freq <-  data_mature_copy$Durée/(data_mature_copy$nb_achat-1)
+
+# On calcule le CA_mois en divisant le montant par la durée. Vu que pour les pour les ventes du dernier mois, on n'est pas sur que les produits aient bien été écoulés, on normalise le montant des ventes sur la période écoulé précédemment. 
 
 data_mature_copy$CA_mois <-  (data_mature_copy$nb_achat-1)/data_mature_copy$nb_achat * data_mature_copy$Montant / data_mature_copy$Durée
 
 data_mature_copy$Quantite_mois <-  (data_mature_copy$nb_achat-1)/data_mature_copy$nb_achat * data_mature_copy$Quantité / data_mature_copy$Durée
 
-data_mature_copy<- data_mature_copy[1:dim(data_mature_copy)[1]-1,]
+# Eventuellement on affine notre choix en enlevant les lignes un peu absurdes. Par exemple, une durée très faible entraine des montants anormalement élevés en considérant l'entrant plutôt que le sortant
+data_mature_copy1 <- data_mature_copy1[data_mature_copy1$freq < 6,] 
+data_mature_copy1 <- data_mature_copy1[data_mature_copy1$CA_mois > 10,] 
+data_mature_copy1 <- data_mature_copy1[data_mature_copy1$Durée > 2,]
 
-# Matrice affinée enlevant les valeurs un peu absurdes (hypothèses à tester et modifier): 
-##data_mature_copy1 <- data_mature_copy1[data_mature_copy1$freq < 6,]
-##data_mature_copy1 <- data_mature_copy1[data_mature_copy1$CA_mois > 10,]
-##data_mature_copy1 <- data_mature_copy1[data_mature_copy1$Durée > 2,]
+# Il y a une ligne NA à la fin qu'on enlève
+data_mature_copy<- data_mature_copy[1:dim(data_mature_copy)[1]-1,]
 
 design_matrix_ambroise <- merge(data_mature_copy, data_entreprise, by = 'SIRET')
 ```
 
-## Matrice de design par magasin panier de vente (pas assez de données)
+#________________________________________________________________________
+
+# Plot des paniers de ventes
 ```{r}
+# On reprend data_mature copy: justa avant la matrice de design d'ambroise
+
+# On fait un one-hot encoder pour avoir une ligne par entreprise et une colonne par produit
 data_mature_copy1 <- data_mature_copy
 data_all_dummy <- with(data_mature_copy1,
                     data.frame(model.matrix(~Référence-1,data_mature_copy1)))
 data_mature$Référence <- NULL
 
-data_all_dummy$PanierProduits <- rowSums(data_all_dummy)
+# On aggrege pour avoir le nombre de produits achetés par le coiffeurs au moins dans les 6 dernizers mois ainsi que le CA_mois par entreprise
+data_all_dummy$PanierProduits <- rowSums(data_all_dummy) # c'est 1 normalement avant qu'on somme
 data_mature_copy1 <- cbind(data_mature_copy1, data_all_dummy)
 data_mature_copy1 <- data_mature_copy1[,c(2,10,12:dim(data_mature_copy1)[2])]
 data_mature_copy1 <- aggregate(. ~ SIRET, data_mature_copy1, FUN = sum)
 
+# On merge avec notre data_entreprise
 design_matrix <- merge(data_entreprise, data_mature_copy1, by = 'SIRET')
-# On enlève la corse
-#data_mature_copy1 <- data_mature_copy1[-c(which(data_mature_copy1$SIRET == 43969784800034)),]
-#data_mature_copy1 <- data_mature_copy1[-c(1,2,3),]
 
+# On étudie nos différents graphes de CA_mois en fonction de panier produit
 library(ggplot2)
 ggplot(data = design_matrix) + geom_density(aes(x=design_matrix$PanierProduits))
 
 ggplot(data = design_matrix) + geom_point(aes(x=PanierProduits, y=CA_mois))
 
+# On recentre sur les paniers inférieurs à 60 et 20: majorité des produits
 ggplot(data = design_matrix[design_matrix$PanierProduits < 60,]) + scale_y_continuous(limits = c(0, 2500)) + scale_x_continuous(limits = c(0,60)) + geom_point(aes(x=PanierProduits, y=CA_mois))
 
 ggplot(data = design_matrix[design_matrix$PanierProduits < 20,])+ scale_y_continuous(limits = c(0, 700)) + scale_x_continuous(limits = c(0,20)) + geom_point(aes(x=PanierProduits, y=CA_mois))
 
+# On regarde si ça n'est pas corélé à la taille de l'entreprise (Nb_employes). On peut le faire pour prixColox aussi par exemple.
 ggplot(data = design_matrix) + scale_y_continuous(limits = c(0, 5100)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes)) + scale_color_gradient(low="grey", high="red") + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes), data = design_matrix)
 
 ggplot(data = design_matrix[design_matrix$PanierProduits < 60,])+ scale_y_continuous(limits = c(0, 2500)) + scale_x_continuous(limits = c(0,60)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes)) + scale_color_gradient(low="grey", high="red") + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes), data = design_matrix[design_matrix$PanierProduits < 60,])
 
 ggplot(data = design_matrix[design_matrix$PanierProduits < 30,])+ scale_y_continuous(limits = c(0, 700)) + scale_x_continuous(limits = c(0,30)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes)) + scale_color_gradient(low="grey", high="red") + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes), data = design_matrix[design_matrix$PanierProduits < 30,])
 
-# On compare avec la concurrence interne
+# On compare avec la concurrence interne pour voir si ça n'est pas corrélé négativement à la concurennce d'autres marques
 
 Interne_data1 <- read.csv2("~/Documents/BigData for Business/Cours/Oreal Data Camp/datas/pack/POC_Concurrence_Interne.csv")
 Interne_data <- Interne_data1
 
-#Interne_data$Montant <- as.numeric(as.character(Interne_data$Montant))
-
 Interne_data <- Interne_data[Interne_data$MoisAnnee > 201512 & Interne_data$GroupeArticle %in% c("Accessoires reventes", "Produit normal/vente", "Frais de port - ventes diverses") & Interne_data$Montant >= 0 & Interne_data$Quantite > 0,]
-
 
 
 Interne_data <- aggregate(. ~ SIRET+Signature, Interne_data[,c(1,7,12)], FUN = sum)
@@ -156,6 +187,7 @@ mean(design_matrix$CA_mois)
 mean(Interne_data_Oreal$Montant)
 mean(Interne_data_Kerastase$Montant)
 
+# On refait les différents plot
 ggplot(data = design_matrix) + scale_y_continuous(limits = c(0, 7000)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = 'black')) + geom_point(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Oreal) + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = 'black'), data = design_matrix) + geom_smooth(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Oreal) #, method = 'gam')
 
 ggplot(data = design_matrix[design_matrix$PanierProduits < 60,]) + scale_y_continuous(limits = c(0, 2500)) + scale_x_continuous(limits = c(0,60)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = 'black')) + geom_point(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Oreal[Interne_data_Oreal$PanierProduits < 60,]) + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = 'black'), data = design_matrix[design_matrix$PanierProduits < 60,]) + geom_smooth(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Oreal[Interne_data_Oreal$PanierProduits < 60,]) #, method = 'gam')
@@ -167,10 +199,13 @@ ggplot(data = design_matrix) + scale_y_continuous(limits = c(0, 15000)) + geom_p
 ggplot(data = design_matrix[design_matrix$PanierProduits < 50,]) + scale_y_continuous(limits = c(0, 7000)) + scale_x_continuous(limits = c(0,50)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = 'black')) + geom_point(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Kerastase[Interne_data_Kerastase$PanierProduits < 50,]) + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = 'black'), data = design_matrix[design_matrix$PanierProduits < 50,]) + geom_smooth(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Kerastase[Interne_data_Kerastase$PanierProduits < 2500,]) #, method = 'gam')
 
 ggplot(data = design_matrix[design_matrix$PanierProduits < 20,])+ scale_y_continuous(limits = c(0, 3000)) + scale_x_continuous(limits = c(0,20)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = 'black')) + geom_point(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Kerastase[Interne_data_Kerastase$PanierProduits < 20,])+ geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = 'black'), data = design_matrix[design_matrix$PanierProduits < 20,]) + geom_smooth(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Kerastase[Interne_data_Kerastase$PanierProduits < 20,]) #, method = 'gam')
-
-# Pas de concurrence interne
 ```
 
+#_____________________________________________________________
+
+
+Code annexe
+# Analyse des paniers moyens en fonction du nombre de produits différents vendus
 On regarde le panier moyen pour chaque tranche de référence
 ```{r}
 ggplot(data = design_matrix) + geom_density(aes(x=design_matrix$PanierProduits))
@@ -214,6 +249,8 @@ quantile_panier_test$number <- 1
 quantile_panier_test <- ddply(quantile_panier_test, .(Fonction, quantile, nb_produit),  summarize, count = sum(number))
 
 ggplot(data = quantile_panier_test[quantile_panier_test$quantile == 3,]) + geom_line(aes(x = nb_produit, y = count, color = Fonction))
+
+ggplot(data = quantile_panier, aes(x = quantile, y = nb_produit, fill = Fonction)) + geom_bar(stat = 'identity', position = 'fill')
 ```
 
 ### Pour chaque quantile, on détermine le nombre de produits que l'on affiche par défaut
@@ -289,3 +326,4 @@ dictionnaire = list(Shampoo = 22, Conditionner = 30, Styling_Foam = 4, Styling_G
 moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
 panier_quantile = c(panier_quantile, dictionnaire)
 ```
+
