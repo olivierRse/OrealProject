@@ -1,0 +1,49 @@
+---
+title: "Table reference"
+author: "gustave_roche"
+date: "3/19/2017"
+output: html_document
+---
+
+```{r }
+ data <- read.table("POC_RK_2014_2017.CSV", sep=";", quote="\"", encoding = 'latin1', header = T)
+
+
+data <- data[data$Classe == "REVENTE",]
+
+data <- data[,c(4, 6, 8)]
+
+data$Fonction <- as.character(data$Fonction)
+
+data[data$Fonction %in% c("Regular shampoo", "SHAMPOOING"), "Fonction"] = "Shampoo"
+
+data[data$Fonction %in% c("LAQUES", "Lacquer", "Wax", "Wax / Clay", "GELS COIFFANTS", "Clay", "COIFFANTS - CIRE"), "Fonction"] = "Wax / Clay"
+
+data[data$Fonction %in% c("Treatment", "Other rinse off treatment", "Other non rinse off treatment", "SOIN SANS RINCAGE", "SOIN A RINCER", "Anti-hair loss treatment", "Mask (hair)", "Liquid lotion", "Non rinse off serum"), "Fonction"] = "Treatment"
+
+data[data$Fonction %in% c("Styling gel spray", "Styling gel jar", "COIFFANTS - PATE", "COIFFANTS-PATE","COIFFANTS-MOUSSES", "Other styling gel", "Styling gel tube"), "Fonction"] = "Styling gel"
+
+data[data$Fonction %in% c("Hairstyling foam", "Styling gel jar", "COIFFANTS - PATE", "Other styling"), "Fonction"] = "Styling foam"
+
+data[data$Fonction %in% c("COLORATION DIRECTE", "Other hair color", "Temporary hair color", "Bonders", "COLORATION D'OXYDAT", "COLORATION TON/TON", "DECOLORATION"), "Fonction"] = "Hair Color"
+
+data[data$Fonction %in% c("Hair spray", "COIFFANTS - SPRAY", "Non rinse off spray", "Sprays"), "Fonction"] = "Sprays"
+
+data[data$Fonction %in% c("Non rinse off cream", "COIFFANTS - CREME"), "Fonction"] = "Cream"
+
+data[data$Fonction %in% c("RENFORCATEURS", "Conditioner", "Conditioners"), "Fonction"] = "Conditioner"
+
+data[data$Fonction %in% c("Sprays", "Styling foam", "Styling gel", "Wax / Clay"), "Fonction"] = "Styling Gel-Spray-Wax-Foam"
+
+data[data$Fonction == "DIVERS PAYANT", "Fonction"] = "Others"
+
+#data[data$SousAxe == "Hair color", "SousAxe"] = "HAIRCOLOR"
+#data[data$SousAxe == "Styling", "SousAxe"] = "STYLING"
+#data[data$SousAxe == "SOINS", "SousAxe"] = "Hair Care"
+
+
+data$Fonction <- as.factor(data$Fonction)
+data <- unique(data)
+
+write.csv(data, "reference_product_type.csv")
+```
