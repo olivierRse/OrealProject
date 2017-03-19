@@ -1,0 +1,140 @@
+---
+title: "Préparations Donnée"
+author: "antoine moreau"
+date: "19 mars 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Bibliothèques nécessaires:
+```{r}
+library(plyr)
+library(FactoMineR)
+library(missMDA)
+```
+
+On charge les données 
+```{r}
+data <- read.csv("~/Documents/Accenture/POC_RK_2014_2017.CSV", sep =";", encoding = "latin1")
+```
+
+On supprime le salon d'Ajaccio:
+```{r}
+data <- data[data$SIRET != "43969784800034",]
+data$Ville <- as.character(data$Ville)
+data$SIRET <- as.numeric(as.character(data$SIRET))
+```
+
+On ne garde que les colonnes qui concernent les salons:
+```{r}
+data_mag <- data[, 13:27]
+#On enlève la colonne DUNS
+data_mag <- data_mag[,-c(4)]
+data_mag <- unique(data_mag)
+row.names(data_mag) <- 1:dim(data_mag)[1]
+```
+
+Nettoyage des données:
+```{r}
+#On s'intéresse aux salons n'ayant pas de SIRET
+ind <- c()
+#Traitement particulier pour un cas
+ind <- c(ind, which(data_mag$Adresse == "2 RUE D ALGERIE" & data_mag$SIRET == 0))
+data_mag[data_mag$Adresse == "2 RUE D ALGERIE" & data_mag$SIRET == 0,"SIRET"] <- data_mag[data_mag$Adresse == "2 RUE D ALGERIE" & data_mag$SIRET != 0,"SIRET"]
+#assignation d'un siret pour les autres 
+ind <- c(ind, which(is.na(data_mag$SIRET) | data_mag$SIRET == 0))
+data_mag[is.na(data_mag$SIRET) | data_mag$SIRET == 0, "SIRET"] <- seq(1, 17)
+
+#On crée un tableau pour garder en mémoire les changements effectués
+mag_changes <- data_mag[ind, c("CodePostal", "Adresse", "SIRET")]
+#write.csv(mag_changes, "changes_mag_siret.csv")
+```
+
+Il faut ensuite supprimer les doublons:
+```{r}
+data_mag$NbPersonnesColox <- as.numeric(data_mag$NbPersonnesColox)
+data_mag$PrixColox <- as.numeric(data_mag$PrixColox)
+#On gère les doublons
+data_mag <- ddply(data_mag, .(SIRET), summarize, GroupePrix = head(GroupePrix, 1), Ville = head(Ville, 1), IRIS = head(IRIS, 1), Latitude = head(Latitude, 1), Longitude = head(Longitude, 1), CodePostal = head(CodePostal, 1), Adresse = head(Adresse, 1), Ouverture = min(Ouverture), NbEmployes = max(NbEmployes), Typologie = head(Typologie, 1), NbPersonnesColox = max (NbPersonnesColox), PrixColox = max(PrixColox), DepartementCode = head(DepartementCode, 1))
+```
+
+Il faut ensuite fusionner le tableau avec les données extérieures:
+On gère des particularités de nom de Ville et CodePostal:
+
+```{r}
+data_mag[data_mag$Ville == "JUAN LES PINS" |data_mag$Ville == " JUAN LES PINS", "Ville"] <- "ANTIBES"
+data_mag[data_mag$Ville == "CANNES LA BOCCA", "Ville"] <- "CANNES"
+data_mag[data_mag$Ville == "ST POL SUR MER", "Ville"] <- "DUNKERQUE"
+data_mag[data_mag$Ville == "PRINCIPAUTE DE MONACO", "Ville"] <- "MONACO"
+data_mag[data_mag$Ville == "LA PLAINE ST DENIS", "CodePostal"] <- 93200
+data_mag[data_mag$Ville == "MONTIGNY LES METZ", "CodePostal"] <- 57158
+data_mag[data_mag$CodePostal == 75116, "CodePostal"] <- 75016
+data_mag[data_mag$CodePostal == 57155, "CodePostal"] <- 57157
+data_mag[data_mag$CodePostal == 42100, "CodePostal"] <- 42000
+data_mag[data_mag$CodePostal == 63100, "CodePostal"] <- 63000
+```
+
+
+On importe source donnée insee:
+```{r}
+data_ext <- read.csv("donnees_insee.csv", row.names = 1)
+colnames(data_ext)[3] <- "Ville"
+
+#On regroupe les données pour un meme Code Postal
+data_ext_unique <- ddply(data_ext, .(CodePostal), summarize, MedianeNiveauDeVie = mean(MedianeNiveauDeVie, na.rm = TRUE), CSP_Artisans_Commercants_ChefsEntreprises_percent = mean(CSP_Artisans_Commercants_ChefsEntreprises_percent , na.rm = TRUE), CSP_ProfessionsIntermediaires_percent = mean(CSP_ProfessionsIntermediaires_percent, na.rm = TRUE), CSP_Ouvriers_percent = mean(CSP_Ouvriers_percent, na.rm = TRUE), Pourcentage_chomeurs_dans_pop_active = mean(Pourcentage_chomeurs_dans_pop_active, na.rm = TRUE), Pourcentage_autres_inactifs_dans_pop = mean(Pourcentage_autres_inactifs_dans_pop, na.rm = TRUE), CSP_Agriculteurs_pourcentage = mean(CSP_Agriculteurs_pourcentage, na.rm = TRUE), CSP_CadresEtProfsIntellectuellesSup_percent = mean(CSP_CadresEtProfsIntellectuellesSup_percent, na.rm = TRUE), CSP_Employes_percent = mean(CSP_Employes_percent, na.rm = TRUE), Pourcentage_Hommes = mean(Pourcentage_Hommes, na.rm = TRUE), Pourcentage_retraites_dans_pop = mean(Pourcentage_retraites_dans_pop, na.rm = TRUE))
+```
+
+On joint les deux tableaux:
+```{r}
+#On merge sur code postal:
+data_mag_complete <- merge(data_mag, data_ext_unique, by = 'CodePostal')
+siret_in <- unique(data_mag_complete$SIRET)
+siret_out <- data_mag$SIRET[! data_mag$SIRET %in% siret_in]
+
+#On merge sur nom de Ville, pour les siret qui n'ont pas marché plus tot:
+data_mag_complete2 <- merge(data_mag[data_mag$SIRET %in% siret_out,] , data_ext[, -c(1,2)], by = c('Ville'))
+
+#On regroupe les deux tableaux
+data_mag_complete <- rbind(data_mag_complete, data_mag_complete2)
+#write.csv(data_mag_complete3, "data_mag_with_insee.csv")
+```
+
+Il faut désormais fusionner avec le tableau indiquant le nombre d'habitants par Ville:
+```{r}
+data_population <- read.csv("Population_Villes.csv")
+data_population <- ddply(data_population, .(Ville), summarize, Population = mean(Population))
+data_with_don_ext <- merge(data_mag_complete, data_population, by = "Ville", all.x = TRUE)
+```
+
+
+
+Pour éviter d'avoir des données anquantes, et comme les données sont à priori assez correlées, on peut faire une FAMD pour remplacer les valeurs manquantes:
+```{r}
+to_impute <- data_with_don_ext[, - c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)]
+to_keep <- data_with_don_ext[,c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)]
+to_impute$DepartementCode <-as.factor(to_impute$DepartementCode)
+imputed <- imputeFAMD(to_impute)
+data_with_don_imputed <- cbind(to_keep, as.data.frame(imputed$completeObs))
+```
+
+
+On a à ce moment la donnée complète sur les magasins
+
+On va désormais changer le tableau de donnée initiale:
+```{r}
+#On effectue les modifications au niveau des siret qui posaient problème
+mag_changes$Adresse <- as.character(mag_changes$Adresse)
+data$Adresse <- as.character(data$Adresse)
+for (i in 1:dim(mag_changes)[1]){
+  adresse <- mag_changes[i, "Adresse"]
+  code <- mag_changes[i, "CodePostal"]
+  siret <- mag_changes[i, "SIRET"]
+  data[data$Adresse == adresse & data$CodePostal == code,"SIRET"] <- siret
+}
+
+data_final_products <- data[, -c(seq(13, 16), seq(18,28))]
+data_finalised <- merge(data_with_don_imputed, data_final_products, by = "SIRET")
+```
