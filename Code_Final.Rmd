@@ -1,0 +1,673 @@
+---
+title: "Préparations Donnée"
+author: "antoine moreau"
+date: "19 mars 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Bibliothèques nécessaires:
+```{r}
+library(plyr)
+library(FactoMineR)
+library(missMDA)
+library(ggplot2)
+library(randomForest)
+```
+
+On charge les données (attention à changer les chemins d'accès)
+```{r}
+data <- read.csv("~/Documents/Accenture/POC_RK_2014_2017.CSV", sep =";", encoding = "latin1")
+data_ext <- read.csv("donnees_insee.csv", row.names = 1)
+data_population <- read.csv("Population_Villes.csv")
+Interne_data <- read.csv2("../POC_Concurrence_Interne.csv")
+```
+
+On supprime le salon d'Ajaccio:
+```{r}
+data <- data[data$SIRET != "43969784800034",]
+data$Ville <- as.character(data$Ville)
+data$SIRET <- as.numeric(as.character(data$SIRET))
+```
+# Préprocessing
+
+##Pour les salons
+On ne garde que les colonnes qui concernent les salons:
+```{r}
+data_mag <- data[, 13:27]
+#On enlève la colonne DUNS
+data_mag <- data_mag[,-c(4)]
+data_mag <- unique(data_mag)
+row.names(data_mag) <- 1:dim(data_mag)[1]
+```
+
+Nettoyage des données:
+```{r}
+#On s'intéresse aux salons n'ayant pas de SIRET
+ind <- c()
+#Traitement particulier pour un cas
+ind <- c(ind, which(data_mag$Adresse == "2 RUE D ALGERIE" & data_mag$SIRET == 0))
+data_mag[data_mag$Adresse == "2 RUE D ALGERIE" & data_mag$SIRET == 0,"SIRET"] <- data_mag[data_mag$Adresse == "2 RUE D ALGERIE" & data_mag$SIRET != 0,"SIRET"]
+#assignation d'un siret pour les autres 
+ind <- c(ind, which(is.na(data_mag$SIRET) | data_mag$SIRET == 0))
+data_mag[is.na(data_mag$SIRET) | data_mag$SIRET == 0, "SIRET"] <- seq(1, 17)
+
+#On crée un tableau pour garder en mémoire les changements effectués
+mag_changes <- data_mag[ind, c("CodePostal", "Adresse", "SIRET")]
+```
+
+Il faut ensuite supprimer les doublons:
+```{r}
+data_mag$NbPersonnesColox <- as.numeric(data_mag$NbPersonnesColox)
+data_mag$PrixColox <- as.numeric(data_mag$PrixColox)
+#On gère les doublons
+data_mag <- ddply(data_mag, .(SIRET), summarize, GroupePrix = head(GroupePrix, 1), Ville = head(Ville, 1), IRIS = head(IRIS, 1), Latitude = head(Latitude, 1), Longitude = head(Longitude, 1), CodePostal = head(CodePostal, 1), Adresse = head(Adresse, 1), Ouverture = min(Ouverture), NbEmployes = max(NbEmployes), Typologie = head(Typologie, 1), NbPersonnesColox = max (NbPersonnesColox), PrixColox = max(PrixColox), DepartementCode = head(DepartementCode, 1))
+```
+
+Il faut ensuite fusionner le tableau avec les données extérieures:
+On gère des particularités de nom de Ville et CodePostal:
+
+```{r}
+data_mag[data_mag$Ville == "JUAN LES PINS" |data_mag$Ville == " JUAN LES PINS", "Ville"] <- "ANTIBES"
+data_mag[data_mag$Ville == "CANNES LA BOCCA", "Ville"] <- "CANNES"
+data_mag[data_mag$Ville == "ST POL SUR MER", "Ville"] <- "DUNKERQUE"
+data_mag[data_mag$Ville == "PRINCIPAUTE DE MONACO", "Ville"] <- "MONACO"
+data_mag[data_mag$Ville == "LA PLAINE ST DENIS", "CodePostal"] <- 93200
+data_mag[data_mag$Ville == "MONTIGNY LES METZ", "CodePostal"] <- 57158
+data_mag[data_mag$CodePostal == 75116, "CodePostal"] <- 75016
+data_mag[data_mag$CodePostal == 57155, "CodePostal"] <- 57157
+data_mag[data_mag$CodePostal == 42100, "CodePostal"] <- 42000
+data_mag[data_mag$CodePostal == 63100, "CodePostal"] <- 63000
+```
+
+
+On importe source donnée insee:
+```{r}
+
+colnames(data_ext)[3] <- "Ville"
+
+#On regroupe les données pour un meme Code Postal
+data_ext_unique <- ddply(data_ext, .(CodePostal), summarize, MedianeNiveauDeVie = mean(MedianeNiveauDeVie, na.rm = TRUE), CSP_Artisans_Commercants_ChefsEntreprises_percent = mean(CSP_Artisans_Commercants_ChefsEntreprises_percent , na.rm = TRUE), CSP_ProfessionsIntermediaires_percent = mean(CSP_ProfessionsIntermediaires_percent, na.rm = TRUE), CSP_Ouvriers_percent = mean(CSP_Ouvriers_percent, na.rm = TRUE), Pourcentage_chomeurs_dans_pop_active = mean(Pourcentage_chomeurs_dans_pop_active, na.rm = TRUE), Pourcentage_autres_inactifs_dans_pop = mean(Pourcentage_autres_inactifs_dans_pop, na.rm = TRUE), CSP_Agriculteurs_pourcentage = mean(CSP_Agriculteurs_pourcentage, na.rm = TRUE), CSP_CadresEtProfsIntellectuellesSup_percent = mean(CSP_CadresEtProfsIntellectuellesSup_percent, na.rm = TRUE), CSP_Employes_percent = mean(CSP_Employes_percent, na.rm = TRUE), Pourcentage_Hommes = mean(Pourcentage_Hommes, na.rm = TRUE), Pourcentage_retraites_dans_pop = mean(Pourcentage_retraites_dans_pop, na.rm = TRUE))
+```
+
+On joint les deux tableaux:
+```{r}
+#On merge sur code postal:
+data_mag_complete <- merge(data_mag, data_ext_unique, by = 'CodePostal')
+siret_in <- unique(data_mag_complete$SIRET)
+siret_out <- data_mag$SIRET[! data_mag$SIRET %in% siret_in]
+
+#On merge sur nom de Ville, pour les siret qui n'ont pas marché plus tot:
+data_mag_complete2 <- merge(data_mag[data_mag$SIRET %in% siret_out,] , data_ext[, -c(1,2)], by = c('Ville'))
+
+#On regroupe les deux tableaux
+data_mag_complete <- rbind(data_mag_complete, data_mag_complete2)
+#write.csv(data_mag_complete3, "data_mag_with_insee.csv")
+```
+
+Il faut désormais fusionner avec le tableau indiquant le nombre d'habitants par Ville:
+```{r}
+data_population <- ddply(data_population, .(Ville), summarize, Population = mean(Population))
+data_with_don_ext <- merge(data_mag_complete, data_population, by = "Ville", all.x = TRUE)
+```
+
+
+
+Pour éviter d'avoir des données manquantes, et comme les données sont à priori assez correlées, on peut faire une FAMD pour remplacer les valeurs manquantes:
+```{r}
+to_impute <- data_with_don_ext[, - c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)]
+to_keep <- data_with_don_ext[,c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)]
+to_impute$DepartementCode <-as.factor(to_impute$DepartementCode)
+imputed <- imputeFAMD(to_impute)
+data_with_don_imputed <- cbind(to_keep, as.data.frame(imputed$completeObs))
+#write.csv(data_with_don_imputed, "data_mag.csv")
+```
+
+
+On a à ce moment la donnée complète sur les magasins
+
+On va désormais changer le tableau de donnée initiale:
+```{r}
+#On effectue les modifications au niveau des siret qui posaient problème
+mag_changes$Adresse <- as.character(mag_changes$Adresse)
+data$Adresse <- as.character(data$Adresse)
+for (i in 1:dim(mag_changes)[1]){
+  adresse <- mag_changes[i, "Adresse"]
+  code <- mag_changes[i, "CodePostal"]
+  siret <- mag_changes[i, "SIRET"]
+  data[data$Adresse == adresse & data$CodePostal == code,"SIRET"] <- siret
+}
+
+data_final_products <- data[, -c(seq(13, 16), seq(18,28))]
+data_finalised <- merge(data_with_don_imputed, data_final_products, by = "SIRET")
+```
+
+##Pour les produits
+```{r}
+#Désormais on travaille sur la matrice obtenue après le pré-processing sur les salons de coiffure
+
+data <- data_finalised
+
+data$Signature <- as.factor(data$Signature)
+data$EAN <- as.factor(data$EAN)
+data$Montant <- as.numeric(as.character(data$Montant))
+data$Quantité <- as.numeric(as.character(data$Quantité))
+
+removing  = c("FreqVisite", "DUNS", "Axe", "N")
+data <- data[, !colnames(data) %in% removing ]
+
+# On cleane en rassemblant les fonctions
+data[data$Fonction %in% c("Regular shampoo", "SHAMPOOING"), "Fonction"] = "Shampoo"
+data[data$Fonction %in% c("LAQUES", "Lacquer", "Wax", "Wax / Clay", "GELS COIFFANTS", "Clay", "COIFFANTS - CIRE"), "Fonction"] = "Wax / Clay"
+data[data$Fonction %in% c("Treatment", "Other rinse off treatment", "Other non rinse off treatment", "SOIN SANS RINCAGE", "SOIN A RINCER", "Anti-hair loss treatment", "Mask (hair)", "Liquid lotion", "Non rinse off serum"), "Fonction"] = "Treatment"
+data[data$Fonction %in% c("Styling gel spray", "Styling gel jar", "COIFFANTS - PATE", "COIFFANTS-PATE","COIFFANTS-MOUSSES", "Other styling gel", "Styling gel tube"), "Fonction"] = "Styling gel"
+data[data$Fonction %in% c("Hairstyling foam", "Styling gel jar", "COIFFANTS - PATE", "Other styling"), "Fonction"] = "Styling foam"
+data[data$Fonction %in% c("COLORATION DIRECTE", "Other hair color", "Temporary hair color", "Bonders"), "Fonction"] = "Other hair color"
+data[data$Fonction %in% c("Hair spray", "COIFFANTS - SPRAY", "Non rinse off spray", "Sprays"), "Fonction"] = "Sprays"
+data[data$Fonction %in% c("Non rinse off cream", "COIFFANTS - CREME"), "Fonction"] = "Non rinse off cream"
+data[data$Fonction %in% c("RENFORCATEURS", "Conditioner"), "Fonction"] = "Conditioner"
+
+# On cleane en rassemblant les sous-axes
+data[data$SousAxe == "Hair color", "SousAxe"] = "HAIRCOLOR"
+data[data$SousAxe == "Styling", "SousAxe"] = "STYLING"
+data[data$SousAxe == "SOINS", "SousAxe"] = "Hair Care"
+
+# On sépare en 3 matrices de travail
+data_vente <- data[,c(1,9,30,33,37:40)]
+data_entreprise <- data[!duplicated(data[,c(1)]),c(1:26)]
+data_produit <- data[!duplicated(data[, c(30)]),c(27:37)]
+```
+
+# Prédiction
+
+## Creation de la matrice de design
+
+
+On réalise la matrice de design. Les choix faits sont les suivants pour le moment:
+
+On ne considère que les magasins ayant ouvert avant 2016: au moins 1 an d'expérience.
+
+Pour l'instant, on ne considère par magasin que les produits qui ont au moins été vendus dans les 6 derniers mois pendant une durée supérieure ou égale à 3 mois.
+
+On essaie de prédire le chiffre d'affaire par mois de l'entreprise par produit. On divise donc le chiffre d'affaire global par la durée d'achat
+
+
+##### Hypothèses
+
+Pour créer notre matrcide de design, nous avons fait des hypothèses afin de rassembler les ventes par magasins. Elles sont les suivantes:
+  - On ne considère que les magasins ayant ouvert avant 2016 afin d'avoir au moins une année de données de vente
+  - On ne descend à la granularité produit que jusq'aux "références"" (et non jusqu'au "produit"" ou "nuances"). Il est possible d'étendre l'étude jusqu'aux "produits"" ou bien même de la restreindre aux "sous-marques"
+  - On ne considère que les reventes
+  - On ne considère que les montants positifs: on ne prend pas en compte les remises dans notre étude
+  - On ne considère que les quantités positives: on ne considère pas les reprises de certains produits pour simplifier notre étude. Il pourrait éventuellement être intéressant de les étudiers pour voir des produits qui ne fonctionnent pas
+  - On ne considère que les produits actuellement vendus en magasin, c'est à dire ayant été achetés il y a moins de 6 mois par le magasin. (Il est éventuellement possible de modifier cette fréquence arbitraire ou de l'affiner en fonction du type de produit vendu)
+  
+  
+```{r}
+# Choix des ventes adéquates
+data_mature <- data_vente[data_vente$Ouverture < 2016 & data_vente$MoisAnnee < 201700 & data_vente$Classe == "REVENTE" & data_vente$Montant >= 0 & data_vente$Quantité > 0,]
+
+data_mature$Référence <- droplevels(data_mature$Référence)
+
+data_mature_copy <- data_mature
+
+# On groupe les achats d'un produit ayant eu lieu le même mois par la même entreprise pour avoir un seul achat de produit par mois.
+
+data_mature_copy <- ddply(data_mature_copy, .(Référence, SIRET, MoisAnnee), summarize, Quantité = sum(Quantité), Montant = sum(Montant))
+
+# On crée cette variable pour compter le nombre total d'achat (En n'en comptant qu'un seul par mois d'après l'aggregation juste au dessus)
+data_mature_copy$nb_achat <- 1
+
+# On aggrège les ventes par magasin et par référence en sommant les ventes totales du produit sur toutes les années. Il est vrai qu'en moyennant les achats du produit sur la durée on perd un peu l'évolution temporelle des ventes d'un produit au sein d'un magasin. Pour cela l'idéal serait d'avoir les données non pas entrantes mais sortantes du magasin.
+
+#On aurait pu éventuellement mettre une limite basse pour limiter ce phénomène et ne pas sommer jusqu'à des ventes en 2014 par exemple. Mais vu qur l'on divise ensuite par la durée ce n'est pas trop grave. 
+
+data_mature_copy <- ddply(data_mature_copy, .(Référence, SIRET),  summarize, nb_achat = sum(nb_achat), Quantité = sum(Quantité), Montant = sum(Montant), date_debut = min(MoisAnnee), date_fin = max(MoisAnnee))
+
+# On crée la variable durée qui est la date entre la première et la dernière vente de notre produit.
+data_mature_copy[,'Durée'] <- (data_mature_copy[,"date_fin"]%/%100-data_mature_copy[,"date_debut"]%/%100) * 12 + (data_mature_copy[,"date_fin"]%% 100-data_mature_copy[,"date_debut"]%% 100)
+
+# On sélectionne les ventes où le produit a été acheté au moins 3 fois par le magasin à deux mois distincts et dont le dernier achat et il y a moins de 6 mois. On ne considère ainsi que les produits encore vendus au sein du magasin
+data_mature_copy <- data_mature_copy[data_mature_copy$Durée != 0,]
+data_mature_copy <- data_mature_copy[data_mature_copy$nb_achat > 2,]
+data_mature_copy <- data_mature_copy[data_mature_copy$date_fin > 201605,]
+
+# On calcule la fréquence d'achat. 
+data_mature_copy$freq <-  data_mature_copy$Durée/(data_mature_copy$nb_achat-1)
+
+# On calcule le CA_mois en divisant le montant par la durée. Vu que pour les pour les ventes du dernier mois, on n'est pas sur que les produits aient bien été écoulés, on normalise le montant des ventes sur la période écoulé précédemment. 
+
+data_mature_copy$CA_mois <-  (data_mature_copy$nb_achat-1)/data_mature_copy$nb_achat * data_mature_copy$Montant / data_mature_copy$Durée
+
+data_mature_copy$Quantite_mois <-  (data_mature_copy$nb_achat-1)/data_mature_copy$nb_achat * data_mature_copy$Quantité / data_mature_copy$Durée
+
+# Eventuellement on affine notre choix en enlevant les lignes un peu absurdes. Par exemple, une durée très faible entraine des montants anormalement élevés en considérant l'entrant plutôt que le sortant
+data_mature_copy1 <- data_mature_copy[data_mature_copy$freq < 6,] 
+data_mature_copy1 <- data_mature_copy[data_mature_copy$CA_mois > 10,] 
+data_mature_copy1 <- data_mature_copy[data_mature_copy$Durée > 2,]
+
+# Il y a une ligne NA à la fin qu'on enlève
+data_mature_copy<- data_mature_copy[1:dim(data_mature_copy)[1]-1,]
+
+design_mat <- merge(data_mature_copy, data_entreprise, by = 'SIRET')
+```
+
+
+##Finalisation de la matrice de design  
+
+L'input est une matrice contenant les colonnes suivantes:
+```{r}
+to_keep <- c("Référence",             #nom du produit (cf données Redken)                                
+             "CA_mois",               #CA par mois (cf création de la matrice de design)     
+             "NbEmployes",            #Nb d'employés du salon (cf données Redken)
+             "PrixColox",             #Prix de la couleur (cf données Redken)
+             "MedianeNiveauDeVie",    #donnée INSEE de la commune du salon
+             "CSP_Artisans_Commercants_ChefsEntreprises_percent", #donnée INSEE de la commune du salon
+             "CSP_ProfessionsIntermediaires_percent", #donnée INSEE de la commune du salon
+             "CSP_Ouvriers_percent",                  #donnée INSEE de la commune du salon
+             "Pourcentage_chomeurs_dans_pop_active",  #donnée INSEE de la commune du salon
+             "Pourcentage_autres_inactifs_dans_pop",  #donnée INSEE de la commune du salon
+             "CSP_Agriculteurs_pourcentage",          #donnée INSEE de la commune du salon
+             "CSP_CadresEtProfsIntellectuellesSup_percent", #donnée INSEE de la commune du salon
+             "CSP_Employes_percent",                  #donnée INSEE de la commune du salon
+             "Pourcentage_Hommes",                    #donnée INSEE de la commune du salon
+             "Pourcentage_retraites_dans_pop"         #donnée INSEE de la commune du salon
+             )
+```
+
+```{r}
+design_mat2 <- design_mat[,to_keep]
+```
+
+Pour entrainer des régresseurs prédisant le chiffre d'affaire pour chaque produit, il nous faut avoir suffisamment de points de données pour ce produit. Le code ci-dessous nous permet de faire réaliser le comptage.
+```{r}
+count_prod <- NULL
+for (prod in levels(design_mat2$Référence)){
+  count_prod <- c(count_prod, a=dim(design_mat2[design_mat2$Référence==prod,])[1])
+  names(count_prod)[length(count_prod)] <- prod
+}
+print(count_prod[1:15]) #on affiche les 15 premiers produits
+```
+
+On ne garde que les produits pour lesquels on a plus de 100 pts de données.
+
+```{r}
+to_keep <- names(count_prod[count_prod>=100])
+print(paste(length(to_keep), "conservés sur", length(levels(factor(design_mat2$Référence)))))
+design_mat2_partielle <- design_mat2[design_mat2$Référence %in% to_keep,]
+```
+
+##Entrainement des régresseurs
+  
+Nous créons une boucle qui, pour chaque produit conservé, va créer une matrice de variable explicatives *X* et un vecteur cible *y* (CA/mois), et entrainer un random forest pour prédire le CA/mois en fonction des données du salon.  
+
+```{r}
+design_mat2_partielle$Référence <- factor(design_mat2_partielle$Référence) #supprimons les "levels" vides
+produits <- levels(design_mat2_partielle$Référence) #récupérons la liste des produits
+regressors <- list() #cette liste va stocker les regresseurs entraînés
+for (prod in produits){                                                #pour chaque produit...
+  X <- design_mat2_partielle[design_mat2_partielle$Référence==prod, 3:length(colnames(design_mat2_partielle))]                             #...on crée la matrice X... 
+  y <- design_mat2_partielle[design_mat2_partielle$Référence==prod, 2] #...et le vecteur y
+  reg <- randomForest(X, y) #on entraine un random forest (500 arbres et une variable sur 3, par défaut)     
+  regressors[[prod]] <- reg #on stock le regresseur entrainé dans la liste
+}
+```
+
+Il est intéressant de regarder l'importance des variables dans les regresseurs. Chaque régresseur peut renvoyer l'importance des variables sous forme de vecteur. Additionnons les vecteurs issus de chaque régresseur (et donc de chaque produit), renormalisons le résultat, et affichons un graphique montrant quelles sont les variables les plus importantes sur l'ensemble des produits.
+
+```{r}
+v_imp <- regressors[[1]]$importance*0
+
+for (regr in regressors){
+  v_imp <- v_imp + regr$importance
+}
+v_imp <- as.data.frame(v_imp/max(v_imp))
+
+ggplot(data=v_imp)+geom_bar(aes(x=reorder(row.names(v_imp),IncNodePurity), y=IncNodePurity), stat="identity", fill=heat.colors(length(row.names(v_imp))))+coord_flip()+xlab("Variable")+ylab("Importance des variables")
+```
+
+##Reprédiction sur tous les magasins
+
+```{r}
+produits <- levels(factor(design_mat2_partielle$Référence)) #la liste des produits est toujours la même
+```
+
+On va créer une matrice des salonspour lesquels on veut des prédictions.  
+  
+On veut donc toutes les colonnes de la matrice de design précédente (design_mat2), en dehors de la cible ( CA/mois) et de la référence du produit. On veut aussi rajouter le SIRET, pour pouvoir garder une trace.  
+
+```{r}
+to_keep <- c("SIRET", colnames(design_mat2))               #on rajoute SIRET
+to_keep <- to_keep[!to_keep%in%c("CA_mois", "Référence")]  #on enlève CA_mois et Référence
+```
+
+```{r}
+a_predire <- unique(design_mat[,to_keep])  #on récupère tous les salons de la matrice du tout début
+```
+
+
+On récupère aussi la liste de tous les SIRET des salons pour lesquels prédire:  
+```{r}
+salons <- levels(factor(a_predire$SIRET))
+```
+
+On crée un dataframe prêt à recevoir les prédictions. Il contient 3 colonnes:  
+- SIRET ("SIRET")  
+- Référence produit ("Référence")  
+- Prédiction de CA/mois ("CA_mois_pred") *pas encore complétée*   
+```{r}
+produits_df <- data.frame("Référence"=produits)
+SIRET_df <- data.frame("SIRET"=salons)
+predictions <- merge(SIRET_df, produits_df, by=NULL) #produit cartésien des deux tableaux précédents
+predictions$CA_mois_pred <- -1 #on crée la troisième colonne en la remplissante de -1
+```
+
+Pour chaque salon, on crée le vecteur de variables explicatives, et pour chaque produit, on fait prédire le régresseur correspondant. Le résultat est stocké dans le tableau créé précédemment.  
+  
+```{r}
+total_it <- length(salons)*length(produits) #on calcule le nombre de prédictions total
+#ATTENTION, la boucle qui suit met plusieurs minutes à s'éxécuter
+for(salon in salons){                            #pour chaque salon...
+  X <- a_predire[a_predire$SIRET==salon,-c(1)]   #...on crée le vecteur de variables explicatives
+  for(prod in produits){                             #pour chaque produit...
+    prediction <- predict(regressors[[prod]], X)     #...on prédit le CA/mois réalisée par le salon
+    #...et on stock le résultat à la bonne ligne du tableau
+    predictions[(predictions$SIRET==salon)&(predictions$Référence==prod), "CA_mois_pred"] <- prediction
+  }
+}
+write.csv(predictions, "predictions.csv")
+
+#REMARQUE: code facilement améliorable en inversant le rôle de salons et produits dans la boucle. Cela nous permettrait d'utiliser la fonction predict sur des matrices contenant les données de plusieurs salons, et donc d'appeler cette fonctions beaucoup moins de fois.
+```
+  
+Pour un salon existant donné, on peut voir les prédictions faites pour chaque produit:
+```{r}
+#exemple pour le salon de SIRET 437554710
+df_437554710 <- predictions[(predictions$SIRET==437554710),]
+df_437554710 <- df_437554710[order(-df_437554710$CA_mois_pred),] #on trie les produits en fonction du CA prédit
+head(df_437554710, 10) #on affiche les 10 premiers
+```
+
+##Prédiction pour un nouveau salon
+
+Si le salon est nouveau (nous n'avons que le prix de la coloration, le nombre d'employés et le code postal du salon), voici comment prédire:  
+```{r}
+# #prenons l'exemple d'un salon de la commune de Sainte Foy-lès-Lyon (69110), 3 employés, où le prix de la coloration est de 52€.
+# 
+# new_salon <- data.frame("Codepos"=69110, "NbEmployes"=3, "PrixColox"=52)
+# 
+# #on importe les données externes
+# ext <- read.csv("external_data.csv")
+# 
+# #on "colle" à notre nouveau salon les données correspondantes à sa commune
+# new_salon <- merge(new_salon, ext)
+# 
+# #on enlève les colonnes indésirables
+# new_salon <- new_salon[, !colnames(new_salon)%in%c("Codepos", "INSEE", "Nom.de.commune")]
+# 
+# #on passe toutes les colonnes en format numeric
+# for (i in 1:length(colnames(new_salon))){
+#   new_salon[,i] <- as.numeric(as.character(new_salon[,i]))
+# }
+# 
+# #on regarde si les colonnes sont bien dans le bon ordre (en comparant avec la variable X qui contient un input correct)
+# for(i in 1:13){print(paste(i, "####",colnames(X)[i], "####", colnames(new_salon)[i]))}
+# 
+# #on remets les colonnes dans le bon ordre
+# new_salon_X <- new_salon[,c(1,2,3,5,7,9,11,13,4,6,8,10,12)]
+# 
+# #on vérifie que ça a marché et on ajuste le nom des colonnes
+# for(i in 1:13){print(paste(i, "####",colnames(X)[i], "####", colnames(new_salon_X)[i]))}
+# colnames(new_salon_X) <- colnames(X)
+# 
+# #on fait la prédiction pour tous les produits
+# pred <- NULL
+# for(prod in produits){
+#   pred <- c(pred, predict(regressors[[prod]], new_salon_X))
+# }
+# predictions_new <- data.frame("Référence"=produits, "CA_mois_pred"=pred)
+# 
+# #on affiche le top 10 des produits en fonction avec la meilleure prédiction
+# head(predictions_new[order(-predictions_new$CA_mois_pred),],10)
+# write.csv(predictions_new, "predictions.csv")
+```
+
+
+#Clustering
+
+Dans cette section nous cherchons à regrouper les magasins qui se ressemblent, pour ensuite voir quels produits sont le plus vendus dans chaque groupe de magasin
+
+```{r}
+col_cluster <- c("NbEmployes", "NbPersonnesColox", "PrixColox", "MedianeNiveauDeVie", "CSP_Artisans_Commercants_ChefsEntreprises_percent", "CSP_ProfessionsIntermediaires_percent", "CSP_Ouvriers_percent", "Pourcentage_chomeurs_dans_pop_active", "Pourcentage_autres_inactifs_dans_pop", "CSP_Agriculteurs_pourcentage", "CSP_CadresEtProfsIntellectuellesSup_percent", "CSP_Employes_percent", "Pourcentage_Hommes", "Pourcentage_retraites_dans_pop", "Population")
+data_to_cluster <- data_with_don_imputed[, col_cluster]
+data_to_cluster <- scale(data_to_cluster)
+# Donner plus d'importances à certaines variables pour le KMEANS
+data_to_cluster[,"PrixColox"] <-  6 * data_to_cluster[,"PrixColox"] # prixcolox
+data_to_cluster[,"MedianeNiveauDeVie"] <-  2 * data_to_cluster[,"MedianeNiveauDeVie"] #niveau de vie
+data_to_cluster[,"NbEmployes"] <-  2 * data_to_cluster[,"NbEmployes"] # nb employés
+
+#On définit le nombre de clusters souhaités
+n = 3
+cl <- kmeans(data_to_cluster, n)
+
+#On représente les clusters sur une carte de France
+colors <- c("blue", "red", "green", "orange", "purple", "yellow", "black")
+couleurs <- sapply(as.factor(cl$cluster), function(i){colors[i]})
+leaflet() %>%
+          addProviderTiles(providers$OpenStreetMap.France) %>%
+          addCircles(lng = data_with_don_imputed[,"Longitude"], lat =data_with_don_imputed[,"Latitude"], color = couleurs, opacity = 1, label = paste("SIRET: ",as.character(data_with_don_imputed[,"SIRET"])))
+
+siret_cluster <- cbind(data_with_don_imputed, data.frame("cluster" = cl$cluster))
+produits_cluster <- merge(design_mat, siret_cluster, by = "SIRET")
+produits_cluster <- ddply(produits_cluster, .(cluster, Référence), summarize, CA_mois = floor(mean(CA_mois)))
+
+#On peut alors observer les meilleurs produits au sein d'un cluster:
+#Exemple avec le cluster 1
+produits_1 <- produits_cluster[produits_cluster$cluster == 1, ]
+head(produits_1[order(-produits_1$CA_mois),])
+```
+
+
+#________________________________________________________________________
+
+Par la suite nous montrons du code qui nous sert à effectuer des observations de nos données:
+
+
+# Plot des paniers de ventes
+
+
+```{r}
+# On reprend data_mature copy: juste avant la matrice de design
+
+# On fait un one-hot encoder pour avoir une ligne par entreprise et une colonne par produit
+data_mature_copy1 <- data_mature_copy
+data_all_dummy <- with(data_mature_copy1,
+                    data.frame(model.matrix(~Référence-1,data_mature_copy1)))
+data_mature$Référence <- NULL
+
+# On aggrege pour avoir le nombre de produits achetés par le coiffeurs au moins dans les 6 dernizers mois ainsi que le CA_mois par entreprise
+data_all_dummy$PanierProduits <- rowSums(data_all_dummy) # c'est 1 normalement avant qu'on somme
+data_mature_copy1 <- cbind(data_mature_copy1, data_all_dummy)
+data_mature_copy1 <- data_mature_copy1[,c(2,10,12:dim(data_mature_copy1)[2])]
+data_mature_copy1 <- aggregate(. ~ SIRET, data_mature_copy1, FUN = sum)
+
+# On merge avec notre data_entreprise
+design_matrix <- merge(data_entreprise, data_mature_copy1, by = 'SIRET')
+
+# On étudie nos différents graphes de CA_mois en fonction de panier produit
+ggplot(data = design_matrix) + geom_density(aes(x=design_matrix$PanierProduits))
+
+ggplot(data = design_matrix) + geom_point(aes(x=PanierProduits, y=CA_mois))
+
+# On recentre sur les paniers inférieurs à 60 et 20: majorité des produits
+ggplot(data = design_matrix[design_matrix$PanierProduits < 60,]) + scale_y_continuous(limits = c(0, 2500)) + scale_x_continuous(limits = c(0,60)) + geom_point(aes(x=PanierProduits, y=CA_mois))
+
+ggplot(data = design_matrix[design_matrix$PanierProduits < 20,])+ scale_y_continuous(limits = c(0, 700)) + scale_x_continuous(limits = c(0,20)) + geom_point(aes(x=PanierProduits, y=CA_mois))
+
+# On regarde si ça n'est pas corélé à la taille de l'entreprise (Nb_employes). On peut le faire pour prixColox aussi par exemple.
+ggplot(data = design_matrix) + scale_y_continuous(limits = c(0, 5100)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes)) + scale_color_gradient(low="grey", high="red") + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes), data = design_matrix)
+
+ggplot(data = design_matrix[design_matrix$PanierProduits < 60,])+ scale_y_continuous(limits = c(0, 2500)) + scale_x_continuous(limits = c(0,60)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes)) + scale_color_gradient(low="grey", high="red") + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes), data = design_matrix[design_matrix$PanierProduits < 60,])
+
+ggplot(data = design_matrix[design_matrix$PanierProduits < 30,])+ scale_y_continuous(limits = c(0, 700)) + scale_x_continuous(limits = c(0,30)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes)) + scale_color_gradient(low="grey", high="red") + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = NbEmployes), data = design_matrix[design_matrix$PanierProduits < 30,])
+
+# On compare avec la concurrence interne pour voir si ça n'est pas corrélé négativement à la concurennce d'autres marques
+
+Interne_data <- Interne_data[Interne_data$MoisAnnee > 201512 & Interne_data$GroupeArticle %in% c("Accessoires reventes", "Produit normal/vente", "Frais de port - ventes diverses") & Interne_data$Montant >= 0 & Interne_data$Quantite > 0,]
+
+
+Interne_data <- aggregate(. ~ SIRET+Signature, Interne_data[,c(1,7,12)], FUN = sum)
+Interne_data$Montant <- Interne_data$Montant / 12
+Interne_data <- merge(x = Interne_data, y = design_matrix, by = "SIRET", all.y = TRUE)
+
+Interne_data_Oreal <- Interne_data[Interne_data$Signature == "L'OREAL PROFESSIONNEL",]
+Interne_data_Oreal <- na.omit(Interne_data_Oreal)
+Interne_data_Kerastase <- Interne_data[Interne_data$Signature == "KERASTASE",]
+Interne_data_Kerastase <- na.omit(Interne_data_Kerastase)
+
+mean(design_matrix$CA_mois)
+mean(Interne_data_Oreal$Montant)
+mean(Interne_data_Kerastase$Montant)
+
+# On refait les différents plot
+ggplot(data = design_matrix) + scale_y_continuous(limits = c(0, 7000)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = 'black')) + geom_point(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Oreal) + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = 'black'), data = design_matrix) + geom_smooth(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Oreal) #, method = 'gam')
+
+ggplot(data = design_matrix[design_matrix$PanierProduits < 60,]) + scale_y_continuous(limits = c(0, 2500)) + scale_x_continuous(limits = c(0,60)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = 'black')) + geom_point(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Oreal[Interne_data_Oreal$PanierProduits < 60,]) + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = 'black'), data = design_matrix[design_matrix$PanierProduits < 60,]) + geom_smooth(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Oreal[Interne_data_Oreal$PanierProduits < 60,]) #, method = 'gam')
+
+ggplot(data = design_matrix[design_matrix$PanierProduits < 20,])+ scale_y_continuous(limits = c(0, 750)) + scale_x_continuous(limits = c(0,20))  + geom_point(aes(x=PanierProduits, y=CA_mois, colour = 'black')) + geom_point(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Oreal[Interne_data_Oreal$PanierProduits < 20,]) + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = 'black'), data = design_matrix[design_matrix$PanierProduits < 20,]) + geom_smooth(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Oreal[Interne_data_Oreal$PanierProduits < 20,]) #, method = 'gam')
+
+ggplot(data = design_matrix) + scale_y_continuous(limits = c(0, 15000)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = 'black')) + geom_point(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Kerastase)  + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = 'black'), data = design_matrix) + geom_smooth(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Kerastase)
+
+ggplot(data = design_matrix[design_matrix$PanierProduits < 50,]) + scale_y_continuous(limits = c(0, 7000)) + scale_x_continuous(limits = c(0,50)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = 'black')) + geom_point(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Kerastase[Interne_data_Kerastase$PanierProduits < 50,]) + geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = 'black'), data = design_matrix[design_matrix$PanierProduits < 50,]) + geom_smooth(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Kerastase[Interne_data_Kerastase$PanierProduits < 2500,]) #, method = 'gam')
+
+ggplot(data = design_matrix[design_matrix$PanierProduits < 20,])+ scale_y_continuous(limits = c(0, 3000)) + scale_x_continuous(limits = c(0,20)) + geom_point(aes(x=PanierProduits, y=CA_mois, colour = 'black')) + geom_point(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Kerastase[Interne_data_Kerastase$PanierProduits < 20,])+ geom_smooth(aes(x=PanierProduits, y=CA_mois, colour = 'black'), data = design_matrix[design_matrix$PanierProduits < 20,]) + geom_smooth(aes(x=PanierProduits, y=Montant, colour = 'red'), data = Interne_data_Kerastase[Interne_data_Kerastase$PanierProduits < 20,]) #, method = 'gam')
+```
+
+#_____________________________________________________________
+
+
+Code annexe
+# Analyse des paniers moyens en fonction du nombre de produits différents vendus
+On regarde le panier moyen pour chaque tranche de référence
+```{r}
+ggplot(data = design_matrix) + geom_density(aes(x=design_matrix$PanierProduits))
+```
+
+### On analyse la répartition des paniers pour les différents quantiles
+```{r}
+quantile(design_matrix$PanierProduits, probs = seq(0, 1, 0.1))
+```
+
+```{r}
+quantile_panier <- merge(data_produit[,c('Fonction', 'Référence')], data_mature_copy, by = 'Référence')
+
+quantile_panier <- quantile_panier[,c(2,3)]
+quantile_panier$nb_produit <- 1
+quantile_panier <- ddply(quantile_panier, .(Fonction, SIRET),  summarize, nb_produit = sum(nb_produit))
+
+quantile_panier <- merge(design_matrix[,c('SIRET', 'PanierProduits')], quantile_panier, by = 'SIRET')
+```
+
+```{r}
+quantile_panier$quantile <- 1
+quantile_panier[quantile_panier$PanierProduits %in% c(3:4), 'quantile'] <- 2
+quantile_panier[quantile_panier$PanierProduits %in% c(5:6), 'quantile'] <- 3
+quantile_panier[quantile_panier$PanierProduits %in% c(7:8), 'quantile'] <- 4
+quantile_panier[quantile_panier$PanierProduits %in% c(9:11), 'quantile'] <- 5
+quantile_panier[quantile_panier$PanierProduits %in% c(12:13), 'quantile'] <- 6
+quantile_panier[quantile_panier$PanierProduits %in% c(14:17), 'quantile'] <- 7
+quantile_panier[quantile_panier$PanierProduits %in% c(18:21), 'quantile'] <- 8
+quantile_panier[quantile_panier$PanierProduits %in% c(22:29), 'quantile'] <- 9
+quantile_panier[quantile_panier$PanierProduits >= 30, 'quantile'] <- 10
+```
+
+```{r}
+ggplot(data = quantile_panier[quantile_panier$quantile == 1,], aes(x = nb_produit, fill = Fonction)) + geom_bar(position = 'dodge')
+
+ggplot(data = quantile_panier[quantile_panier$quantile == 1,], aes(x = Fonction, y = nb_produit)) + geom_bar(stat = 'identity')
+
+quantile_panier_test <- quantile_panier
+quantile_panier_test$number <- 1
+quantile_panier_test <- ddply(quantile_panier_test, .(Fonction, quantile, nb_produit),  summarize, count = sum(number))
+
+ggplot(data = quantile_panier_test[quantile_panier_test$quantile == 3,]) + geom_line(aes(x = nb_produit, y = count, color = Fonction))
+
+ggplot(data = quantile_panier, aes(x = quantile, y = nb_produit, fill = Fonction)) + geom_bar(stat = 'identity', position = 'fill')
+```
+
+### Pour chaque quantile, on détermine le nombre de produits que l'on affiche par défaut
+```{r}
+i = 4
+quantile(design_matrix$PanierProduits, probs = seq(0, 1, 0.1))
+
+dim(quantile_panier[quantile_panier$quantile == i,])[1]
+
+ggplot(data = quantile_panier[quantile_panier$quantile == i,], aes(x = nb_produit, fill = Fonction)) + geom_bar(position = 'dodge')
+
+ggplot(data = quantile_panier[quantile_panier$quantile == i,], aes(x = Fonction, y = nb_produit)) + geom_bar(stat = 'identity')
+
+shampoo <- mean(quantile_panier[quantile_panier$quantile == i & quantile_panier$Fonction == 'Shampoo', 'nb_produit'])
+
+conditioner <- mean(quantile_panier[quantile_panier$quantile == i & quantile_panier$Fonction == 'Conditioner', 'nb_produit'])
+
+ggplot(data = quantile_panier_test[quantile_panier_test$quantile == i,]) + geom_line(aes(x = nb_produit, y = count, color = Fonction)) + geom_vline(xintercept = shampoo, color = 'seagreen2') + geom_vline(xintercept = conditioner, color = 'red')
+
+
+```
+
+```{r}
+panier_quantile = c()
+moyenne_panier = c()
+#i = 1
+dictionnaire = list(Shampoo = 3, Conditionner = 3, Styling_Foam = 2, Styling_Gel = 2, Treatment = 2, Wax_Clay = 2, Sprays = 2, Other_hair_color = 1, Non_rinse_off_cream = 1)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 2
+dictionnaire = list(Shampoo = 4, Conditionner = 3, Styling_Foam = 2, Styling_Gel = 2, Treatment = 2, Wax_Clay = 2, Sprays = 2, Other_hair_color = 1, Non_rinse_off_cream = 1)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 3
+dictionnaire = list(Shampoo = 5, Conditionner = 4, Styling_Foam = 2, Styling_Gel = 2, Treatment = 2, Wax_Clay = 2, Sprays = 2, Other_hair_color = 1, Non_rinse_off_cream = 1)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 4
+dictionnaire = list(Shampoo = 7, Conditionner = 5, Styling_Foam = 3, Styling_Gel = 3, Treatment = 3, Wax_Clay = 3, Sprays = 3, Other_hair_color = 2, Non_rinse_off_cream = 2)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 5
+dictionnaire = list(Shampoo = 8, Conditionner = 7, Styling_Foam = 3, Styling_Gel = 3, Treatment = 3, Wax_Clay = 3, Sprays = 3, Other_hair_color = 2, Non_rinse_off_cream = 2)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 6
+dictionnaire = list(Shampoo = 8, Conditionner = 8, Styling_Foam = 4, Styling_Gel = 4, Treatment = 4, Wax_Clay = 4, Sprays = 4, Other_hair_color = 2, Non_rinse_off_cream = 2)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 7
+dictionnaire = list(Shampoo = 10, Conditionner = 10, Styling_Foam = 4, Styling_Gel = 4, Treatment = 4, Wax_Clay = 4, Sprays = 6, Other_hair_color = 2, Non_rinse_off_cream = 2)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 8
+dictionnaire = list(Shampoo = 11, Conditionner = 11, Styling_Foam = 4, Styling_Gel = 4, Treatment = 4, Wax_Clay = 4, Sprays = 6, Other_hair_color = 2, Non_rinse_off_cream = 2)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 9
+dictionnaire = list(Shampoo = 15, Conditionner = 13, Styling_Foam = 4, Styling_Gel = 4, Treatment = 4, Wax_Clay = 4, Sprays = 6, Other_hair_color = 2, Non_rinse_off_cream = 2)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+
+#i = 10
+dictionnaire = list(Shampoo = 22, Conditionner = 30, Styling_Foam = 4, Styling_Gel = 8, Treatment = 4, Wax_Clay = 4, Sprays = 10, Other_hair_color = 2, Non_rinse_off_cream = 2)
+moyenne = list(Shampoo = shampoo, Conditioner = conditioner)
+panier_quantile = c(panier_quantile, dictionnaire)
+```
