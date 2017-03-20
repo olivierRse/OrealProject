@@ -1,0 +1,177 @@
+---
+title: "Shiny-GetMatrix"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R markdown
+
+```{r}
+setwd("/Users/oliverousseau/Documents/BigData for Business/Cours/Oreal Data Camp")
+library(ggplot2)
+```
+
+On soigne un peu les données en rassemblant les trucs similaires.
+On ne s'intéressera qu'à la sous-hiérarchie référence et pas plus bas
+
+#_________________________________________________________
+
+# Prédiction
+
+## Creation de la matrice de design
+
+#### Préprocessing
+```{r}
+
+
+data <- read.csv("~/Documents/BigData for Business/Cours/Oreal Data Camp/datas/Moreau/final_cleaned_data.csv", row.names=1)
+
+data$Signature <- as.factor(data$Signature)
+data$EAN <- as.factor(data$EAN)
+data$Montant <- as.numeric(as.character(data$Montant))
+data$Quantité <- as.numeric(as.character(data$Quantité))
+
+removing  = c("FreqVisite", "DUNS", "Axe", "N")
+data <- data[, !colnames(data) %in% removing ]
+
+# On cleane en rassemblant les fonctions
+
+data[data$Fonction %in% c("Regular shampoo", "SHAMPOOING"), "Fonction"] = "Shampoo"
+data[data$Fonction %in% c("LAQUES", "Lacquer", "Wax", "Wax / Clay", "GELS COIFFANTS", "Clay", "COIFFANTS - CIRE"), "Fonction"] = "Wax / Clay"
+data[data$Fonction %in% c("Treatment", "Other rinse off treatment", "Other non rinse off treatment", "SOIN SANS RINCAGE", "SOIN A RINCER", "Anti-hair loss treatment", "Mask (hair)", "Liquid lotion", "Non rinse off serum"), "Fonction"] = "Treatment"
+
+data[data$Fonction %in% c("Styling gel spray", "Styling gel jar", "COIFFANTS - PATE", "COIFFANTS-PATE","COIFFANTS-MOUSSES", "Other styling gel", "Styling gel tube"), "Fonction"] = "Styling gel"
+data[data$Fonction %in% c("Hairstyling foam", "Styling gel jar", "COIFFANTS - PATE", "Other styling"), "Fonction"] = "Styling foam"
+
+data[data$Fonction %in% c("COLORATION DIRECTE", "Other hair color", "Temporary hair color", "Bonders"), "Fonction"] = "Other hair color"
+
+data[data$Fonction %in% c("Hair spray", "COIFFANTS - SPRAY", "Non rinse off spray", "Sprays"), "Fonction"] = "Sprays"
+
+data[data$Fonction %in% c("Non rinse off cream", "COIFFANTS - CREME"), "Fonction"] = "Non rinse off cream"
+data[data$Fonction %in% c("RENFORCATEURS", "Conditioner"), "Fonction"] = "Conditioner"
+
+# On cleane en rassemblant les sous-axes
+data[data$SousAxe == "Hair color", "SousAxe"] = "HAIRCOLOR"
+data[data$SousAxe == "Styling", "SousAxe"] = "STYLING"
+data[data$SousAxe == "SOINS", "SousAxe"] = "Hair Care"
+
+# On sépare en nos 3 matrices de travail
+data_vente <- data[,c(1,7,29,32,37:39)]
+data_entreprise <- data[!duplicated(data[,c(1)]),c(1:25)]
+data_produit <- data[!duplicated(data[, c(29)]),c(26:36)]
+```
+
+## Analyse produits/paniers
+
+#### Matrice de design
+```{r}
+# Matrice on enlève les remises et les reprises (avant 2016 ?)
+
+# 2016
+data_mature1 <- data_vente[data_vente$MoisAnnee < 201700 & data_vente$Classe == "REVENTE" & data_vente$Montant >= 0 & data_vente$Quantité > 0 & data_vente$Ouverture < 2016, ]
+dim(data_mature1)
+data_mature1$Référence <- droplevels(data_mature1$Référence)
+
+data_mature_copy1 <- data_mature1
+
+library(plyr)
+
+data_mature_copy1 <- ddply(data_mature_copy1, .(Référence, SIRET, MoisAnnee), summarize, Quantité = sum(Quantité), Montant = sum(Montant))
+
+# On crée cette variable pour compter le nombre total d'achat (En n'en comptant qu'un seul par mois d'après l'aggregation juste au dessus)
+data_mature_copy1$nb_achat <- 1
+
+data_mature_copy1 <- ddply(data_mature_copy1, .(Référence, SIRET),  summarize, nb_achat = sum(nb_achat), Quantité = sum(Quantité), Montant = sum(Montant), date_debut = min(MoisAnnee), date_fin = max(MoisAnnee))
+
+data_mature_copy1[,'Durée'] <- (data_mature_copy1[,"date_fin"]%/%100-data_mature_copy1[,"date_debut"]%/%100) * 12 + (data_mature_copy1[,"date_fin"]%% 100-data_mature_copy1[,"date_debut"]%% 100)
+
+data_mature_copy1 <- data_mature_copy1[data_mature_copy1$Durée != 0,]
+data_mature_copy1 <- data_mature_copy1[data_mature_copy1$nb_achat > 2,]
+data_mature_copy1 <- data_mature_copy1[data_mature_copy1$date_fin > 201606,]
+
+data_mature_copy1$freq <-  data_mature_copy1$Durée/(data_mature_copy1$nb_achat-1)
+data_mature_copy1$CA_mois <-  (data_mature_copy1$nb_achat-1)/data_mature_copy1$nb_achat * data_mature_copy1$Montant / data_mature_copy1$Durée
+data_mature_copy1$Quantite_mois <-  (data_mature_copy1$nb_achat-1)/data_mature_copy1$nb_achat * data_mature_copy1$Quantité / data_mature_copy1$Durée
+
+# Enlever le NA
+data_mature_copy1<- data_mature_copy1[1:dim(data_mature_copy1)[1]-1,]
+
+# Test d'autre hypothèses
+data_mature_copy1 <- data_mature_copy1[data_mature_copy1$freq < 6,]
+data_mature_copy1 <- data_mature_copy1[data_mature_copy1$CA_mois > 10,]
+data_mature_copy1 <- data_mature_copy1[data_mature_copy1$Durée > 2,]
+
+design_matrix_ambroise1 <- merge(data_mature_copy1, data_entreprise, by = 'SIRET')
+
+# 2015
+data_mature2 <- data_vente[data_vente$MoisAnnee < 201600 & data_vente$Classe == "REVENTE" & data_vente$Montant >= 0 & data_vente$Quantité > 0 & data_vente$Ouverture < 2015, ]
+dim(data_mature2)
+data_mature2$Référence <- droplevels(data_mature2$Référence)
+
+data_mature_copy2 <- data_mature2
+
+library(plyr)
+
+data_mature_copy2 <- ddply(data_mature_copy2, .(Référence, SIRET, MoisAnnee), summarize, Quantité = sum(Quantité), Montant = sum(Montant))
+
+# On crée cette variable pour compter le nombre total d'achat (En n'en comptant qu'un seul par mois d'après l'aggregation juste au dessus)
+data_mature_copy2$nb_achat <- 1
+
+data_mature_copy2 <- ddply(data_mature_copy2, .(Référence, SIRET),  summarize, nb_achat = sum(nb_achat), Quantité = sum(Quantité), Montant = sum(Montant), date_debut = min(MoisAnnee), date_fin = max(MoisAnnee))
+
+data_mature_copy2[,'Durée'] <- (data_mature_copy2[,"date_fin"]%/%100-data_mature_copy2[,"date_debut"]%/%100) * 12 + (data_mature_copy2[,"date_fin"]%% 100-data_mature_copy2[,"date_debut"]%% 100)
+
+data_mature_copy2 <- data_mature_copy2[data_mature_copy2$Durée != 0,]
+data_mature_copy2 <- data_mature_copy2[data_mature_copy2$nb_achat > 2,]
+data_mature_copy2 <- data_mature_copy2[data_mature_copy2$date_fin > 201506,]
+
+data_mature_copy2$freq <-  data_mature_copy2$Durée/(data_mature_copy2$nb_achat-2)
+data_mature_copy2$CA_mois <-  (data_mature_copy2$nb_achat-1)/data_mature_copy2$nb_achat * data_mature_copy2$Montant / data_mature_copy2$Durée
+data_mature_copy2$Quantite_mois <-  (data_mature_copy2$nb_achat-1)/data_mature_copy2$nb_achat * data_mature_copy2$Quantité / data_mature_copy2$Durée
+
+# Enlever le NA
+data_mature_copy2<- data_mature_copy2[1:dim(data_mature_copy2)[1]-1,]
+
+# Test d'autre hypothèses FACULTATIVES
+data_mature_copy2 <- data_mature_copy2[data_mature_copy2$freq < 6,]
+data_mature_copy2 <- data_mature_copy2[data_mature_copy2$CA_mois > 10,]
+data_mature_copy2 <- data_mature_copy2[data_mature_copy2$Durée > 2,]
+
+design_matrix_ambroise2 <- merge(data_mature_copy2, data_entreprise, by = 'SIRET')
+```
+
+## Matrice de design par magasin panier de vente (pas assez de données)
+```{r}
+# 2016
+data_mature_copy11 <- data_mature_copy1
+data_all_dummy <- with(data_mature_copy11,
+                    data.frame(model.matrix(~Référence-1,data_mature_copy11)))
+data_mature_copy11$Référence <- NULL
+data_all_dummy$PanierProduits <- rowSums(data_all_dummy)
+data_mature_copy11 <- cbind(data_mature_copy11, data_all_dummy)
+data_mature_copy11 <- data_mature_copy11[,c(1,9,11:dim(data_mature_copy11)[2])]
+data_mature_copy11 <- aggregate(. ~ SIRET, data_mature_copy11, FUN = sum)
+
+design_matrix1 <- merge(data_entreprise, data_mature_copy11, by = 'SIRET')
+
+# 2015
+data_mature_copy22 <- data_mature_copy2
+data_all_dummy2 <- with(data_mature_copy22,data.frame(model.matrix(~Référence-1,data_mature_copy22)))
+data_mature_copy22$Référence <- NULL
+data_all_dummy2$PanierProduits <- rowSums(data_all_dummy2)
+data_mature_copy22 <- cbind(data_mature_copy22, data_all_dummy2)
+data_mature_copy22 <- data_mature_copy22[,c(1,9,11:dim(data_mature_copy22)[2])]
+data_mature_copy22 <- aggregate(. ~ SIRET, data_mature_copy22, FUN = sum)
+
+design_matrix2 <- merge(data_entreprise, data_mature_copy22, by = 'SIRET')
+```
+
+# Save Data
+```{r}
+write.csv(design_matrix1, file = '/Users/oliverousseau/Documents/BigData for Business/Cours/Oreal Data Camp/datas/ShinyData/design_matrix1.csv')
+
+write.csv(design_matrix2, file = '/Users/oliverousseau/Documents/BigData for Business/Cours/Oreal Data Camp/datas/ShinyData/design_matrix2.csv')
+```
