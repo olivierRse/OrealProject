@@ -10,6 +10,7 @@
 ## LOAD PACKAGES ####
 
 library(ggplot2)
+library(plotly)
 library(shiny)
 
 ## READ IN DATA AND ORGANIZE ####
@@ -28,9 +29,9 @@ PanierProduits <- design_matrix1[,c('SIRET', 'PanierProduits')]
 shinyServer <- function(input, output){
   
   # Make plot
-  output$graph = renderPlot({
+  output$graph = renderPlotly({
     point_siret <- data.frame(x = design_matrix1[design_matrix1$SIRET == input$SIRET, "PanierProduits", ], y = design_matrix1[design_matrix1$SIRET == input$SIRET, "CA_mois"])
-    point_siret_2015 <- data.frame(x = design_matrix2[design_matrix2$SIRET == input$SIRET, "PanierProduits"], y = design_matrix1[design_matrix1$SIRET == input$SIRET, "CA_mois"])
+    point_siret_2015 <- data.frame(x = design_matrix2[design_matrix2$SIRET == input$SIRET, "PanierProduits"], y = design_matrix2[design_matrix2$SIRET == input$SIRET, "CA_mois"])
     
     
     design_graph <- design_matrix1[,c('CA_mois', 'PanierProduits', 'SIRET', 'cluster', 'CodePostal', 'NbEmployes', 'PrixColox')]
@@ -45,14 +46,27 @@ shinyServer <- function(input, output){
     
     design_graph <- design_graph[design_graph$NbEmployes >= input$Nb[1] & design_graph$NbEmployes <= input$Nb[2] & design_graph$PrixColox >= input$Prix[1] & design_graph$PrixColox <= input$Prix[2] & design_graph$PanierProduits >= input$x[1] & design_graph$PanierProduits <= input$x[2], ]
     
-    ggplot(data = design_graph)+ geom_smooth(aes(x=PanierProduits, y=CA_mois), color = 'black', linetype = 4) + geom_point(aes(x=PanierProduits, y=CA_mois)) + scale_x_continuous(limits = c(input$x[1],input$x[2])) + scale_y_continuous(limits = c(input$y[1],input$y[2])) + geom_smooth(aes(x=PanierProduits, y=CA_mois), data = design_matrix1, size = 2) + geom_point(aes(x = x, y = y), data = point_siret, color = 'red', size = 10) + geom_point(aes(x = x, y = y), data = point_siret_2015, color = 'orange', size = 5) + geom_point(aes(x = PanierProduits, y=CA_mois), color = input$CodePostal, data = subset(design_graph, CodePostal == CodePostal0), size = 3)
-  
+    plot <- ggplot(data = design_graph)+ geom_smooth(aes(x=PanierProduits, y=CA_mois), color = 'black', linetype = 4) + geom_point(aes(x=PanierProduits, y=CA_mois)) + scale_x_continuous(limits = c(0,65)) + scale_y_continuous(limits = c(0,5000)) + geom_smooth(aes(x=PanierProduits, y=CA_mois), data = design_matrix1, size = 2) + geom_point(aes(x = x, y = y), data = point_siret, color = 'red', size = 10) + geom_point(aes(x = x, y = y), data = point_siret_2015, color = 'orange', size = 5) + geom_point(aes(x = PanierProduits, y=CA_mois), color = input$CodePostal, data = subset(design_graph, CodePostal == CodePostal0), size = 3)  + labs(y = "Chiffre d'affaire par mois", x = "Nombre de produits différents vendus")
+    return(ggplotly(plot))
+    
+    #plot <- ggplot(data = design_graph) + geom_point(aes(x=PanierProduits, y=CA_mois)) + scale_x_continuous(limits = c(0,65)) + scale_y_continuous(limits = c(0,5000)) + geom_smooth(aes(x=PanierProduits, y=CA_mois), data = design_matrix1, size = 2) + geom_point(aes(x = x, y = y), data = point_siret, color = 'red', size = 10) + geom_point(aes(x = x, y = y), data = point_siret_2015, color = 'orange', size = 5) + geom_point(aes(x = PanierProduits, y=CA_mois), color = input$CodePostal, data = subset(design_graph, CodePostal == CodePostal0), size = 3)  + labs(y = "Chiffre d'affaire par mois", x = "Nombre de produits différents vendus")
     })
   
-  output$density = renderPlot({
-    point_siret <- data.frame(x = design_matrix1[design_matrix1$SIRET == input$SIRET, "PanierProduits"], y = design_matrix1[design_matrix1$SIRET == input$SIRET, "CA_mois"])
-    point_siret_2015 <- data.frame(x = design_matrix2[design_matrix2$SIRET == input$SIRET, "PanierProduits"], y = design_matrix1[design_matrix1$SIRET == input$SIRET, "CA_mois"])
+  output$echantillon <- renderPrint({
+    design_graph <- design_matrix1[,c('CA_mois', 'PanierProduits', 'SIRET', 'cluster', 'CodePostal', 'NbEmployes', 'PrixColox')]
     
+    # Cluster
+    if(input$cluster == 1){
+      cluster0 <- design_graph[design_graph$SIRET == input$SIRET,'cluster']
+      design_graph <- design_graph[design_graph$cluster == cluster0,] 
+    }
+    
+    design_graph <- design_graph[design_graph$NbEmployes >= input$Nb[1] & design_graph$NbEmployes <= input$Nb[2] & design_graph$PrixColox >= input$Prix[1] & design_graph$PrixColox <= input$Prix[2] & design_graph$PanierProduits >= input$x[1] & design_graph$PanierProduits <= input$x[2], ]
+    
+    paste("Nombre d'entreprises dans l'échantillon:",dim(design_graph)[1])
+  })
+  
+  output$plot_PanierProduits = renderPlotly({
     design_graph <- design_matrix1[,c('CA_mois', 'PanierProduits', 'SIRET', 'cluster', 'CodePostal', 'NbEmployes', 'PrixColox')]
     
     # Cluster
@@ -65,9 +79,65 @@ shinyServer <- function(input, output){
     
     design_graph <- design_graph[design_graph$NbEmployes >= input$Nb[1] & design_graph$NbEmployes <= input$Nb[2] & design_graph$PrixColox >= input$Prix[1] & design_graph$PrixColox <= input$Prix[2] & design_graph$PanierProduits >= input$x[1] & design_graph$PanierProduits <= input$x[2], ]
     
-    ggplot(data = design_graph) + geom_density(aes(x=design_graph[,input$Densité]), color = 'red', linetype = 3, size = 2) + geom_density(aes(x=design_matrix1[,input$Densité]), data = design_matrix1, color = 'blue', size =1) + geom_vline(xintercept = design_matrix1[design_matrix1$SIRET == input$SIRET, input$Densité], color = 'red') + geom_vline(xintercept = design_matrix2[design_matrix2$SIRET == input$SIRET, input$Densité], color = 'orange')
+    plot <- ggplot(data = design_graph) + geom_density(aes(x=design_graph[,'PanierProduits']), color = 'black', linetype = 3, size = 2) + geom_density(aes(x=design_matrix1[,'PanierProduits']), data = design_matrix1, color = 'blue', size =1) + geom_vline(xintercept = design_matrix1[design_matrix1$SIRET == input$SIRET, 'PanierProduits'], color = 'red') + geom_vline(xintercept = design_matrix2[design_matrix2$SIRET == input$SIRET, 'PanierProduits'], color = 'orange') + labs(x = "Nombre de produits différents vendus", y = "Densité")
+    #plot <- ggplot(data = design_graph) + geom_density(aes(x=design_matrix1[,'PanierProduits']), data = design_matrix1, color = 'blue', size =1) + geom_vline(xintercept = design_matrix1[design_matrix1$SIRET == input$SIRET, 'PanierProduits'], color = 'red') + geom_vline(xintercept = design_matrix2[design_matrix2$SIRET == input$SIRET, 'PanierProduits'], color = 'orange') + labs(x = "Nombre de produits différents vendus", y = "Densité")
+    ggplotly(plot)
     
+  })
+  
+  output$plot_Nb_Employes = renderPlotly({
+    design_graph <- design_matrix1[,c('CA_mois', 'PanierProduits', 'SIRET', 'cluster', 'CodePostal', 'NbEmployes', 'PrixColox')]
+    
+    # Cluster
+    if(input$cluster == 1){
+      cluster0 <- design_graph[design_graph$SIRET == input$SIRET,'cluster']
+      design_graph <- design_graph[design_graph$cluster == cluster0,] 
+    }
+    
+    CodePostal0 <- design_graph[design_graph$SIRET == input$SIRET,'CodePostal']
+    
+    design_graph <- design_graph[design_graph$NbEmployes >= input$Nb[1] & design_graph$NbEmployes <= input$Nb[2] & design_graph$PrixColox >= input$Prix[1] & design_graph$PrixColox <= input$Prix[2] & design_graph$PanierProduits >= input$x[1] & design_graph$PanierProduits <= input$x[2], ]
+    
+    plot <- ggplot(data = design_graph) + geom_density(aes(x=design_graph[,'NbEmployes']), color = 'black', linetype = 3, size = 2) + geom_density(aes(x=design_matrix1[,'NbEmployes']), data = design_matrix1, color = 'blue', size =1) + geom_vline(xintercept = design_matrix1[design_matrix1$SIRET == input$SIRET, 'NbEmployes'], color = 'red') + labs(x = "Nombre d'employés", y = "Densité")
+    #plot <- ggplot(data = design_graph) + geom_density(aes(x=design_matrix1[,'NbEmployes']), data = design_matrix1, color = 'blue', size =1) + geom_vline(xintercept = design_matrix1[design_matrix1$SIRET == input$SIRET, 'NbEmployes'], color = 'red') + labs(x = "Nombre d'employés", y = "Densité")
+    ggplotly(plot)
 
+  })
+  
+  output$plot_PrixColox = renderPlotly({
+    design_graph <- design_matrix1[,c('CA_mois', 'PanierProduits', 'SIRET', 'cluster', 'CodePostal', 'NbEmployes', 'PrixColox')]
+    
+    # Cluster
+    if(input$cluster == 1){
+      cluster0 <- design_graph[design_graph$SIRET == input$SIRET,'cluster']
+      design_graph <- design_graph[design_graph$cluster == cluster0,] 
+    }
+    
+    CodePostal0 <- design_graph[design_graph$SIRET == input$SIRET,'CodePostal']
+    
+    design_graph <- design_graph[design_graph$NbEmployes >= input$Nb[1] & design_graph$NbEmployes <= input$Nb[2] & design_graph$PrixColox >= input$Prix[1] & design_graph$PrixColox <= input$Prix[2] & design_graph$PanierProduits >= input$x[1] & design_graph$PanierProduits <= input$x[2], ]
+    
+    plot <- ggplot(data = design_graph) + geom_density(aes(x=design_graph[,'PrixColox']), color = 'black', linetype = 3, size = 2) + geom_density(aes(x=design_matrix1[,'PrixColox']), data = design_matrix1, color = 'blue', size =1) + geom_vline(xintercept = design_matrix1[design_matrix1$SIRET == input$SIRET, 'PrixColox'], color = 'red') + labs(x = "Prix de la coloration", y = "Densité")
+    #plot <- ggplot(data = design_graph) + geom_density(aes(x=design_matrix1[,'PrixColox']), data = design_matrix1, color = 'blue', size =1) + geom_vline(xintercept = design_matrix1[design_matrix1$SIRET == input$SIRET, 'PrixColox'], color = 'red') + labs(x = "Prix de la coloration", y = "Densité")
+    ggplotly(plot)
+  })
+  
+  output$plot_CA = renderPlotly({
+    design_graph <- design_matrix1[,c('CA_mois', 'PanierProduits', 'SIRET', 'cluster', 'CodePostal', 'NbEmployes', 'PrixColox')]
+    
+    # Cluster
+    if(input$cluster == 1){
+      cluster0 <- design_graph[design_graph$SIRET == input$SIRET,'cluster']
+      design_graph <- design_graph[design_graph$cluster == cluster0,] 
+    }
+    
+    CodePostal0 <- design_graph[design_graph$SIRET == input$SIRET,'CodePostal']
+    
+    design_graph <- design_graph[design_graph$NbEmployes >= input$Nb[1] & design_graph$NbEmployes <= input$Nb[2] & design_graph$PrixColox >= input$Prix[1] & design_graph$PrixColox <= input$Prix[2] & design_graph$PanierProduits >= input$x[1] & design_graph$PanierProduits <= input$x[2], ]
+    
+    plot <- ggplot(data = design_graph) + geom_density(aes(x=design_graph[,'CA_mois']), color = 'black', linetype = 3, size = 2) + geom_density(aes(x=design_matrix1[,'CA_mois']), data = design_matrix1, color = 'blue', size =1) + geom_vline(xintercept = design_matrix1[design_matrix1$SIRET == input$SIRET, 'CA_mois'], color = 'red') + geom_vline(xintercept = design_matrix2[design_matrix2$SIRET == input$SIRET, 'CA_mois'], color = 'orange') + labs(x = "Chiffre d'affaire par mois", y = "Densité")
+    #plot <- ggplot(data = design_graph) + geom_density(aes(x=design_matrix1[,'CA_mois']), data = design_matrix1, color = 'blue', size =1) + geom_vline(xintercept = design_matrix1[design_matrix1$SIRET == input$SIRET, 'CA_mois'], color = 'red') + labs(x = "Chiffre d'affaire par mois", y = "Densité")
+    ggplotly(plot)
   })
   
 }
