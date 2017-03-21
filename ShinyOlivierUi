@@ -9,24 +9,35 @@
 
 library(shiny)
 library(ggplot2)
+library(plotly)
 
 shinyUI(fluidPage(
   titlePanel("Positionnement magasin"),
   
   sidebarPanel(
     numericInput("SIRET", "SIRET :", min = 1, max = 10, value = 2),
-    sliderInput("y", "Echelle y :", min = 0, max = 10000, value = c(0,4500)),
-    sliderInput("x", "Panier Produit:", min = 1, max = 70, value = c(0,65)),
+    h2("Choix de l'échantillon"),
+    h3(strong("Les variables")),
+    sliderInput("x", "Nombre de produits différents vendus", min = 1, max = 65, value = c(0,65)),
+    sliderInput("Nb", "Nombre d'employés :", min = 1, max = 15, value = c(1,15)),
+    sliderInput("Prix", "Prix Colox :", min = 10, max = 75, value = c(10,75)),
+    h3(strong("Les groupes")),
     radioButtons("cluster", "Cluster", choices = c("Tout"=0, "Magasins Similaires"=1), inline=T,selected=0),
     radioButtons("CodePostal", "CodePostal", choices = c("Oui"='green', "Non"='black'), inline=T, selected='black'),
-    radioButtons("Densité", "Afficher la répartition:", choices = c("Paniers Produit"='PanierProduits', 'Nb Emloyés'='NbEmployes', 'PrixColox'='PrixColox'), inline=T, selected='PanierProduits'),
-    sliderInput("Nb", "Nombre d'employés :", min = 1, max = 15, value = c(1,15)),
-    sliderInput("Prix", "Prix Colox :", min = 10, max = 75, value = c(10,75))
+    h3(strong("Taille de l'échantillon")),
+    verbatimTextOutput("echantillon")
   ),
+
   
   mainPanel(
-    #verbatimTextOutput("sortie1"),
-    plotOutput("graph"),
-    plotOutput("density")
+    h3("Chiffre d'affaire en fonction du nombre de produits différents vendus"),
+    plotlyOutput("graph"),
+    h3("Distribution des différentes variables"),
+    tabsetPanel(
+      tabPanel("Nombre de produits différents vendus", plotlyOutput("plot_PanierProduits")),
+      tabPanel("Nombre d'employés", plotlyOutput("plot_Nb_Employes")),
+      tabPanel("Prix de la coloration", plotlyOutput("plot_PrixColox")),
+      tabPanel("Chiffre d'affaire par mois", plotlyOutput("plot_CA"))
+    )
   )
 ))
